@@ -1,0 +1,17 @@
+build/
+*.rar
+*.exe
+*.o
+*.elf
+*.map
+*.list
+*.cyclo
+*.d
+*.su
+.vs/
+.DS_Store
+Thumbs.db
+rfid-attendance
+**/Debug/
+*.key
+*.srl
