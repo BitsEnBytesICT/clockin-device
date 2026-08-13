@@ -16,12 +16,13 @@
 #include <vector>
 
 #include "api_worker.h"
-#include "assets/fonts/plus_jakarta_sans_wght.h"
 #include "card_presence.h"
 #include "performance_metrics.h"
 #include "rfid_reader.h"
 #include "signature_pad.h"
 #include "touch_handler.h"
+#include "ui_assets.h"
+#include "ui_feedback.h"
 
 #define KEYPAD_BUTTON_W 120
 #define KEYPAD_BUTTON_H 80
@@ -58,25 +59,7 @@ enum class WorkflowRequest {
     Signature
 };
 
-enum class HitTarget {
-    None,
-    Admin,
-    AttendanceBack,
-    AttendanceConfirm,
-    SignatureClear,
-    SignatureCancel,
-    SignatureSubmit,
-    AdminBack,
-    Key1,
-    Key2,
-    Key3,
-    Key4,
-    Key5,
-    Key6,
-    Key7,
-    Key8,
-    Key9
-};
+typedef UIControl HitTarget;
 
 struct GestureState {
     bool active;
@@ -105,6 +88,7 @@ struct AppContext {
     SignaturePad signature;
     PerformanceMetrics performance;
     GestureState gesture;
+    UIButtonFeedback button_feedback;
 
     std::string pending_rfid_uid;
     std::string user_name;
@@ -177,6 +161,7 @@ struct AppContext {
         current_state = next;
         state_started = now_seconds;
         gesture.Clear();
+        button_feedback.Clear();
         touch_handler.SuppressUntilRelease();
     }
 
@@ -199,6 +184,7 @@ struct AppContext {
         admin_password_buffer.clear();
         admin_last_digit = -1;
         gesture.Clear();
+        button_feedback.Clear();
     }
 };
 
@@ -542,6 +528,7 @@ static void HandleTouch(AppContext& context, double now_seconds) {
         if (signature_stroke_event) {
             if (event.type == TouchEventType::Down) {
                 context.gesture.Clear();
+                context.button_feedback.CancelPress();
                 context.signature.Begin(event.position);
             } else if (event.type == TouchEventType::Move && context.signature.IsDrawing()) {
                 context.signature.Add(event.position);
@@ -562,12 +549,16 @@ static void HandleTouch(AppContext& context, double now_seconds) {
             context.gesture.start = event.position;
             context.gesture.last = event.position;
             context.gesture.target = TargetAt(context.current_state, event.position);
+            context.button_feedback.Press(context.gesture.target);
             if (context.current_state == STATE_ATTENDANCE &&
                 PointInRect(event.position, 40, 90, 560, 330)) {
                 context.attendance_dragging = true;
             }
         } else if (event.type == TouchEventType::Move && context.gesture.active) {
-            if (Distance(event.position, context.gesture.start) > CLICK_MOVEMENT_LIMIT) context.gesture.moved = true;
+            if (Distance(event.position, context.gesture.start) > CLICK_MOVEMENT_LIMIT) {
+                context.gesture.moved = true;
+                context.button_feedback.CancelPress();
+            }
             if (context.current_state == STATE_ATTENDANCE && context.attendance_dragging) {
                 const float total_height = 24.0f * context.attendance_dates.size();
                 const float max_scroll = std::max(0.0f, total_height - 280.0f);
@@ -581,11 +572,17 @@ static void HandleTouch(AppContext& context, double now_seconds) {
                                      context.gesture.target != HitTarget::None &&
                                      release_target == context.gesture.target;
             const HitTarget activated = context.gesture.target;
+            if (valid_click) {
+                context.button_feedback.Release(activated, now_seconds);
+            } else {
+                context.button_feedback.CancelPress();
+            }
             context.gesture.Clear();
             context.attendance_dragging = false;
             if (valid_click) ActivateTarget(context, activated, now_seconds);
         } else if (event.type == TouchEventType::Cancel) {
             context.gesture.Clear();
+            context.button_feedback.CancelPress();
             context.attendance_dragging = false;
             context.signature.CancelStroke();
         }
@@ -726,13 +723,15 @@ static void RenderPerformanceOverlay(const AppContext& context) {
     draw->AddText(ImVec2(16, 15), IM_COL32(255, 255, 255, 255), lines);
 }
 
-static void RenderApp(AppContext& context) {
+static void RenderApp(AppContext& context, double now_seconds) {
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    context.ui_renderer.BeginFrame(&context.button_feedback, now_seconds);
     switch (context.current_state) {
         case STATE_WAITING_CARD:
             context.ui_renderer.RenderWaitingScreen(draw);
             if (context.health_known && !context.health_online) {
-                draw->AddText(ImVec2(18, 448), IM_COL32(205, 75, 60, 255), "API offline - nieuwe scans kunnen mislukken");
+                draw->AddText(ImVec2(18, 448), BitsBytesTheme::RedText,
+                              "API offline - nieuwe scans kunnen mislukken");
             }
             break;
         case STATE_PROCESSING:
@@ -771,22 +770,34 @@ static void RenderApp(AppContext& context) {
     RenderPerformanceOverlay(context);
 }
 
-static ImFont* LoadJakartaSans(ImGuiIO& io, float size) {
-    ImFontConfig config;
-    config.FontDataOwnedByAtlas = false;
-    ImFont* font = io.Fonts->AddFontFromMemoryTTF(
-        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf,
-        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf_len,
-        size,
-        &config);
-    printf("%c Loaded embedded font: Plus Jakarta Sans\n", font != NULL ? '+' : '-');
-    return font;
-}
-
 #ifdef DESKTOP_SIM
 static const char* DEFAULT_SIM_RFID_UID = "11F3EF12";
 static bool g_show_simulator_help = true;
 static std::string g_last_simulated_card = "none";
+
+static bool CaptureSimulatorFrame(const std::string& path, int width, int height) {
+    if (path.empty() || width <= 0 || height <= 0) return false;
+    std::vector<unsigned char> rgba(static_cast<size_t>(width) * height * 4);
+    std::vector<unsigned char> rgb(static_cast<size_t>(width) * height * 3);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    for (int output_y = 0; output_y < height; ++output_y) {
+        const int source_y = height - output_y - 1;
+        for (int x = 0; x < width; ++x) {
+            const size_t source = (static_cast<size_t>(source_y) * width + x) * 4;
+            const size_t destination = (static_cast<size_t>(output_y) * width + x) * 3;
+            rgb[destination] = rgba[source];
+            rgb[destination + 1] = rgba[source + 1];
+            rgb[destination + 2] = rgba[source + 2];
+        }
+    }
+    FILE* output = fopen(path.c_str(), "wb");
+    if (output == NULL) return false;
+    fprintf(output, "P6\n%d %d\n255\n", width, height);
+    const size_t written = fwrite(rgb.data(), 1, rgb.size(), output);
+    const bool closed = fclose(output) == 0;
+    return written == rgb.size() && closed;
+}
 
 static const char* StateName(AppState state) {
     switch (state) {
@@ -1006,11 +1017,27 @@ int main(int argc, char** argv) {
 #else
     io.MouseDrawCursor = false;
 #endif
-    ImFont* font = LoadJakartaSans(io, 20.0f);
-    if (font != NULL) io.FontDefault = font;
+    BrandedFontBundle fonts = AddBrandedFonts(io, 20.0f);
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 100");
 
+    // ImGui 1.92 selects the dynamic atlas path on its first frame after the
+    // renderer backend advertises texture updates. Synchronize that state
+    // before packing the generated icon masks into the same texture.
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+    ImGui::EndFrame();
+    InstallBrandedIcons(io, fonts, 20.0f);
+    context.ui_renderer.SetFonts(fonts.regular, fonts.semibold, fonts.icons_installed);
+
+    printf("%c Loaded embedded fonts: Outfit Regular + SemiBold\n",
+           fonts.regular != NULL && fonts.semibold != NULL ? '+' : '-');
+    printf("%c Branded icon atlas: %s (%dx%d RGBA)\n",
+           fonts.icons_installed ? '+' : '-',
+           fonts.icons_installed ? "ready" : "fallback labels",
+           fonts.atlas_width,
+           fonts.atlas_height);
     printf("+ Framebuffer request: %s\n", framebuffer_format.c_str());
     printf("+ Framebuffer actual: R%d G%d B%d A%d\n",
            actual_red_bits, actual_green_bits, actual_blue_bits, actual_alpha_bits);
@@ -1024,17 +1051,22 @@ int main(int argc, char** argv) {
 #ifdef DESKTOP_SIM
     double simulator_exit_after = 0.0;
     int simulator_signature_points = 0;
+    std::string simulator_screenshot;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
         const std::string rfid_prefix = "--sim-rfid=";
         const std::string exit_prefix = "--sim-exit-after=";
         const std::string signature_prefix = "--sim-signature-points=";
+        const std::string screenshot_prefix = "--sim-screenshot=";
         if (argument.compare(0, rfid_prefix.size(), rfid_prefix) == 0) {
             InjectSimulationCard(context, argument.substr(rfid_prefix.size()), true, SteadySeconds());
         } else if (argument.compare(0, exit_prefix.size(), exit_prefix) == 0) {
             simulator_exit_after = std::max(0.0, atof(argument.substr(exit_prefix.size()).c_str()));
         } else if (argument.compare(0, signature_prefix.size(), signature_prefix) == 0) {
             simulator_signature_points = std::max(0, atoi(argument.substr(signature_prefix.size()).c_str()));
+        } else if (argument.compare(0, screenshot_prefix.size(), screenshot_prefix) == 0) {
+            simulator_screenshot = argument.substr(screenshot_prefix.size());
+            g_show_simulator_help = false;
         }
     }
     if (simulator_signature_points > 0) {
@@ -1083,7 +1115,7 @@ int main(int argc, char** argv) {
         const double update_start = SteadySeconds();
         UpdateApp(context, delta, frame_start);
         const double render_start = SteadySeconds();
-        RenderApp(context);
+        RenderApp(context, frame_start);
 #ifdef DESKTOP_SIM
         RenderSimulatorHelp(context);
 #endif
@@ -1092,10 +1124,18 @@ int main(int argc, char** argv) {
         int height = 0;
         glfwGetFramebufferSize(window, &width, &height);
         glViewport(0, 0, width, height);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+        glClearColor(247.0f / 255.0f, 251.0f / 255.0f, 1.0f, 1.0f);
         glDisable(GL_SCISSOR_TEST);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#ifdef DESKTOP_SIM
+        if (!simulator_screenshot.empty() && frame_start - application_started >= 0.5) {
+            const bool captured = CaptureSimulatorFrame(simulator_screenshot, width, height);
+            printf("%c Simulator screenshot: %s\n",
+                   captured ? '+' : '-', simulator_screenshot.c_str());
+            simulator_screenshot.clear();
+        }
+#endif
         const double swap_start = SteadySeconds();
         glfwSwapBuffers(window);
         const double frame_end = SteadySeconds();

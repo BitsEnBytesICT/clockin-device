@@ -16,7 +16,9 @@ Weston/DRM; it does not force the panel to an unverified refresh rate.
 
 ## Included
 
-- Application source and embedded Plus Jakarta Sans font
+- Application source with embedded Outfit Regular/SemiBold subsets
+- Bits & Bytes colours and six monochrome management-platform icons packed into
+  the same 512-wide ImGui font texture
 - Pinned ImGui and GLFW source needed to build without generated binaries
 - WSL desktop build/launcher
 - STM32MP1 OpenSTLinux cross-build launcher
@@ -74,6 +76,10 @@ STM32_SIM_MOCK_API=1 STM32_SIM_API_DELAY_MS=10000 \
 
 STM32_SIM_MOCK_API=1 BITS_BYTES_PERF_OVERLAY=1 \
   ./build-desktop/imgui_app --sim-signature-points=1000 --sim-exit-after=5
+
+# Capture an unobstructed native 800x480 UI frame as a portable PPM image.
+STM32_SIM_MOCK_API=1 ./build-desktop/imgui_app \
+  --sim-screenshot=/tmp/bits-bytes-ui.ppm --sim-exit-after=2
 ```
 
 Simulator controls:
@@ -158,6 +164,14 @@ the scheduler waits for the firmware's existing `RX:` echo and applies safe
 post-buzzer spacing before sending another command. This avoids command loss
 while the M4 is temporarily blocked scanning a held card.
 
+The embedded UI follows the management platform's Outfit typography and colour
+tokens. Action controls use dark-blue primary, blue-outline secondary and quiet
+white variants; red and green are reserved for error and success status. Button
+icons are generated offline into 20x20 alpha masks and packed into the existing
+font atlas. The board does not parse SVGs, decode images, load fonts from disk or
+switch to a second UI texture. Touch-down scales only the drawn rectangle; the
+original 140x60 hit areas and release validation remain unchanged.
+
 ## Tests
 
 The desktop build includes tests for touch report parsing and rotation,
@@ -169,6 +183,16 @@ stale replies and ambiguous results:
 cmake -S . -B build-desktop -DDESKTOP_SIM=ON -DIMGUI_BUILD_TESTS=ON
 cmake --build build-desktop --parallel
 ctest --test-dir build-desktop --output-on-failure
+```
+
+The test executable also checks the bounded button press/release/cancel
+animation state. UI asset generation is not part of either normal build. To
+regenerate assets after changing the management-platform design sources, install
+`fonttools`, `Pillow` and `CairoSVG`, then run:
+
+```bash
+python3 tools/generate_branded_assets.py \
+  --frontend /path/to/Bits-Bytes-management-platform/frontend
 ```
 
 For memory/undefined-behavior checks, configure a separate build after the
@@ -214,6 +238,11 @@ All attendance calls require an authorized API key. The matching backend is the
 The vendored dependencies are Dear ImGui at commit `1897248bda4873654bc79cddebb8a9119f16467a`
 and GLFW at commit `8e15281d34a8b9ee9271ccce38177a3d812456f8`. Their licenses are included
 beside their source.
+
+Outfit is Copyright 2021 The Outfit Project Authors and distributed under the
+SIL Open Font License 1.1 in `assets/fonts/OFL.txt`. The embedded files are
+static, Latin-focused subsets generated from the management platform's checked-in
+variable font.
 
 Board/display references: [STM32MP157F-DK2 product page](https://www.st.com/en/evaluation-tools/stm32mp157f-dk2.html),
 [ST GPU application programming manual](https://www.st.com/resource/en/programming_manual/pm0263-stm32mp157-gpu-application-programming-manual-stmicroelectronics.pdf),

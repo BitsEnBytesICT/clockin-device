@@ -5,6 +5,7 @@
 #include "signature_pad.h"
 #include "tiny_json.h"
 #include "touch_handler.h"
+#include "ui_feedback.h"
 
 #include <chrono>
 #include <cmath>
@@ -361,6 +362,33 @@ void TestPerformanceCadence() {
     unsetenv("BITS_BYTES_PERF_OVERLAY");
 }
 
+void TestButtonFeedback() {
+    UIButtonFeedback feedback;
+    CHECK(std::abs(feedback.Scale(UIControl::Admin, 10.0) - 1.0f) < 0.0001f);
+
+    feedback.Press(UIControl::Admin);
+    CHECK(feedback.IsPressed(UIControl::Admin));
+    CHECK(std::abs(feedback.Scale(UIControl::Admin, 10.0) - 0.97f) < 0.0001f);
+    CHECK(!feedback.IsPressed(UIControl::SignatureSubmit));
+
+    feedback.Release(UIControl::Admin, 10.0);
+    CHECK(!feedback.IsPressed(UIControl::Admin));
+    CHECK(feedback.IsAnimating(UIControl::Admin, 10.05));
+    CHECK(feedback.Scale(UIControl::Admin, 10.05) > 1.0f);
+    CHECK(!feedback.IsAnimating(UIControl::Admin, 10.181));
+    CHECK(std::abs(feedback.Scale(UIControl::Admin, 10.181) - 1.0f) < 0.0001f);
+
+    feedback.Press(UIControl::SignatureCancel);
+    feedback.CancelPress();
+    CHECK(!feedback.IsPressed(UIControl::SignatureCancel));
+    CHECK(std::abs(feedback.Scale(UIControl::SignatureCancel, 11.0) - 1.0f) < 0.0001f);
+
+    feedback.Press(UIControl::AttendanceConfirm);
+    feedback.Clear();
+    CHECK(!feedback.IsPressed(UIControl::AttendanceConfirm));
+    CHECK(!feedback.IsAnimating(UIControl::Admin, 10.1));
+}
+
 void RunWorkflowSoak(int seconds) {
     if (seconds <= 0) return;
     unsetenv("STM32_SIM_API_FAILURE");
@@ -443,6 +471,7 @@ int main(int argc, char** argv) {
     TestCardPresence();
     TestAPIWorker();
     TestPerformanceCadence();
+    TestButtonFeedback();
     RunWorkflowSoak(soak_seconds);
     curl_global_cleanup();
 
