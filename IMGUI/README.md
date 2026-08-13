@@ -9,6 +9,11 @@ The same source also builds as a WSLg desktop simulator on Windows. In simulator
 mode, only the board hardware is simulated; API calls can still go to a local,
 acceptance or production backend.
 
+The DK2 has a dual 800 MHz Cortex-A7, 512 MB DDR3L and a Vivante OpenGL ES 2.0
+GPU. Its 800x480 panel is exposed by the ST Linux driver at 50 Hz (preferred)
+and 60 Hz. The application keeps VSync enabled and follows the mode selected by
+Weston/DRM; it does not force the panel to an unverified refresh rate.
+
 ## Included
 
 - Application source and embedded Plus Jakarta Sans font
@@ -47,6 +52,28 @@ For offline UI work, use the built-in mock backend:
 
 ```bash
 STM32_SIM_MOCK_API=1 ./run-desktop-sim.sh
+```
+
+The mock can emulate a slow or failing backend without blocking rendering:
+
+```bash
+STM32_SIM_MOCK_API=1 STM32_SIM_API_DELAY_MS=10000 ./run-desktop-sim.sh
+STM32_SIM_MOCK_API=1 STM32_SIM_API_FAILURE=uncertain ./run-desktop-sim.sh
+```
+
+Supported failure values are `offline`, `uncertain`, `malformed`, `auth`, and
+`http500`. They are simulator-only.
+
+Automated performance smoke runs can close the simulator cleanly and populate a
+worst-case active signature without a mouse:
+
+```bash
+STM32_SIM_MOCK_API=1 STM32_SIM_API_DELAY_MS=10000 \
+  BITS_BYTES_PERF_OVERLAY=1 ./build-desktop/imgui_app \
+  --sim-rfid=SIM_CLOCK_OUT --sim-exit-after=5
+
+STM32_SIM_MOCK_API=1 BITS_BYTES_PERF_OVERLAY=1 \
+  ./build-desktop/imgui_app --sim-signature-points=1000 --sim-exit-after=5
 ```
 
 Simulator controls:
@@ -95,7 +122,83 @@ export BITS_BYTES_API_KEY_FILE=/etc/bitsenbytes/rfid-api-key
 
 Store only the raw key in `/etc/bitsenbytes/rfid-api-key` and protect it with
 `chmod 600`. The client uses `/dev/ttyRPMSG0` for RFID/M4 communication and
-`/dev/input/event1` for touch on the target board.
+`/dev/input/event1` for touch on the target board. Missing hardware devices are
+retried with bounded backoff, so the UI can start while RPMsg or touch is still
+being initialized.
+
+## Runtime diagnostics and tuning
+
+Optional settings:
+
+```bash
+# Show FPS, frame percentiles, touch latency, draw size and reconnect counters.
+export BITS_BYTES_PERF_OVERLAY=1
+
+# Override the touch event device when Linux enumerates it differently.
+export BITS_BYTES_TOUCH_DEVICE=/dev/input/event1
+
+# auto tries RGB565 on STM32 and falls back to RGBA8888.
+export BITS_BYTES_FRAMEBUFFER_FORMAT=auto  # auto | rgb565 | rgba8888
+```
+
+At startup the program logs the active refresh rate and the framebuffer channel
+bits actually selected by EGL. `auto` defaults to RGBA8888 in the desktop
+simulator and RGB565-with-fallback on STM32. Touch orientation and the existing
+180-degree STM32 display rotation remain unchanged.
+
+Network calls run on one background worker and reuse their TLS connection. The
+RFID scan and signed clock-in routes are intentionally never retried: if a
+request may have reached the server, its reply was lost, or a state-changing
+route returns a possibly-partial 5xx response, the UI says
+`Resultaat onbekend` and requires removal/fresh presentation of the card. This
+prevents an automatic retry from reversing or duplicating attendance state.
+
+M4 commands use the persistent RPMsg descriptor. Only one command is in flight;
+the scheduler waits for the firmware's existing `RX:` echo and applies safe
+post-buzzer spacing before sending another command. This avoids command loss
+while the M4 is temporarily blocked scanning a held card.
+
+## Tests
+
+The desktop build includes tests for touch report parsing and rotation,
+signature smoothing/error and payload limits, JSON escaping, fragmented RPMsg,
+held-card timing, hardware command spacing, async API delays, cancellation,
+stale replies and ambiguous results:
+
+```bash
+cmake -S . -B build-desktop -DDESKTOP_SIM=ON -DIMGUI_BUILD_TESTS=ON
+cmake --build build-desktop --parallel
+ctest --test-dir build-desktop --output-on-failure
+```
+
+For memory/undefined-behavior checks, configure a separate build after the
+desktop launcher has prepared its local curl headers. A bounded workflow soak
+runner is included:
+
+```bash
+cmake -S . -B build-sanitize -DDESKTOP_SIM=ON -DIMGUI_BUILD_TESTS=ON \
+  -DENABLE_SANITIZERS=ON \
+  -DLOCAL_CURL_ROOT="$PWD/build-desktop/curl-dev/root"
+cmake --build build-sanitize --parallel
+ASAN_OPTIONS=detect_leaks=1 ./build-sanitize/imgui_tests --soak-seconds=1800
+```
+
+Before deploying a release to the board, run `./build-stm32.sh` and verify that
+`file build-stm32/imgui_app` reports a 32-bit ARM EABI5 executable.
+
+## DK2 verification checklist
+
+- Confirm the startup log reports the intended 50 or 60 Hz mode with VSync.
+- Draw while a test API response is delayed; the trace must continue updating.
+- Check all four touch corners and the signature/button boundary.
+- Hold one RFID card in the field; it must create exactly one workflow.
+- Remove and present it again; the next workflow must be accepted.
+- Exercise clock-in, attendance, signature, clock-out, cancel and uncertain-result paths.
+- Verify red/green LEDs, buzzer, backlight dimming and RPMsg reconnect behavior.
+- With the overlay enabled, target p95 frame time below 25 ms at 50 Hz or
+  20.8 ms at 60 Hz, p99 below two frames, and touch latency below two frames.
+- Complete the board soak before release; simulator/cross-build validation does
+  not substitute for measuring the real DK2 display and touchscreen.
 
 ## Backend contract
 
@@ -111,3 +214,7 @@ All attendance calls require an authorized API key. The matching backend is the
 The vendored dependencies are Dear ImGui at commit `1897248bda4873654bc79cddebb8a9119f16467a`
 and GLFW at commit `8e15281d34a8b9ee9271ccce38177a3d812456f8`. Their licenses are included
 beside their source.
+
+Board/display references: [STM32MP157F-DK2 product page](https://www.st.com/en/evaluation-tools/stm32mp157f-dk2.html),
+[ST GPU application programming manual](https://www.st.com/resource/en/programming_manual/pm0263-stm32mp157-gpu-application-programming-manual-stmicroelectronics.pdf),
+and the [ST 50/60 Hz panel driver](https://github.com/STMicroelectronics/linux/blob/v6.6-stm32mp/drivers/gpu/drm/panel/panel-orisetech-otm8009a.c).

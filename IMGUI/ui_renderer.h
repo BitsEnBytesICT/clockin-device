@@ -118,8 +118,6 @@ public:
             float btn_x = KEYPAD_START_X + col * KEYPAD_SPACING_X;
             float btn_y = KEYPAD_START_Y + row * KEYPAD_SPACING_Y;
             
-            ImVec2 btn_min = ImVec2(btn_x, btn_y);
-            ImVec2 btn_max = ImVec2(btn_x + KEYPAD_BUTTON_W, btn_y + KEYPAD_BUTTON_H);
             ImVec2 btn_center = ImVec2(btn_x + KEYPAD_BUTTON_W * 0.5f, btn_y + KEYPAD_BUTTON_H * 0.5f);
             float base_radius = (KEYPAD_BUTTON_W < KEYPAD_BUTTON_H ? KEYPAD_BUTTON_W : KEYPAD_BUTTON_H) * 0.5f;
 
@@ -270,7 +268,8 @@ public:
     void RenderSignatureScreen(ImDrawList* draw_list, 
                                const std::string& user_name,
                                const std::vector<std::vector<ImVec2>>& strokes,
-                               const std::vector<ImVec2>& currentStroke) {
+                               const std::vector<ImVec2>& currentStroke,
+                               const std::string& warning) {
         // Header
         std::string header = "Welkom, " + user_name + "!";
         ImVec2 header_size = ImGui::GetFont()->CalcTextSizeA(28, FLT_MAX, 0.0f, header.c_str());
@@ -282,6 +281,12 @@ public:
         ImVec2 instr_size = ImGui::CalcTextSize(instruction);
         ImVec2 instr_pos = ImVec2(400 - instr_size.x / 2, 80);
         draw_list->AddText(instr_pos, IM_COL32(90, 90, 90, 255), instruction);
+
+        if (!warning.empty()) {
+            ImVec2 warning_size = ImGui::CalcTextSize(warning.c_str());
+            draw_list->AddText(ImVec2(325.0f - warning_size.x * 0.5f, 115.0f),
+                               IM_COL32(205, 75, 60, 255), warning.c_str());
+        }
         
         // Signature area
         ImVec2 sig_min = ImVec2(50, 150);
@@ -325,6 +330,27 @@ public:
                    IM_COL32(60, 150, 90, 255),
                    IM_COL32(255, 255, 255, 255));
     }
+
+    void RenderProcessingScreen(ImDrawList* draw_list, const std::string& message) {
+        const ImVec2 center(400.0f, 215.0f);
+        const float time = static_cast<float>(ImGui::GetTime());
+        const float start_angle = time * 5.0f;
+        const int segments = 36;
+        for (int i = 0; i < segments; ++i) {
+            const float phase = static_cast<float>(i) / segments;
+            const float a0 = start_angle + phase * 6.2831853f;
+            const float a1 = start_angle + (phase + 0.7f / segments) * 6.2831853f;
+            const int alpha = 45 + static_cast<int>(phase * 210.0f);
+            draw_list->AddLine(ImVec2(center.x + std::cos(a0) * 52.0f, center.y + std::sin(a0) * 52.0f),
+                               ImVec2(center.x + std::cos(a1) * 52.0f, center.y + std::sin(a1) * 52.0f),
+                               IM_COL32(42, 120, 200, alpha), 5.0f);
+        }
+        const std::string label = message.empty() ? "Even geduld..." : message;
+        ImVec2 size = ImGui::GetFont()->CalcTextSizeA(28, FLT_MAX, 0.0f, label.c_str());
+        draw_list->AddText(ImGui::GetFont(), 28,
+                           ImVec2(400.0f - size.x * 0.5f, 315.0f),
+                           IM_COL32(40, 40, 40, 255), label.c_str());
+    }
     
     void RenderSuccessScreen(ImDrawList* draw_list, 
                             const std::string& user_name,
@@ -355,7 +381,9 @@ public:
         draw_list->AddText(ImGui::GetFont(), 24, name_pos, IM_COL32(90, 90, 90, 255), name_msg.c_str());
     }
     
-    void RenderErrorScreen(ImDrawList* draw_list, const std::string& message) {
+    void RenderErrorScreen(ImDrawList* draw_list,
+                           const std::string& message,
+                           const std::string& detail = std::string()) {
         ImVec2 center = ImVec2(400, 200);
         
         // Error circle
@@ -374,6 +402,11 @@ public:
         ImVec2 msg_size = ImGui::GetFont()->CalcTextSizeA(28, FLT_MAX, 0.0f, message.c_str());
         ImVec2 msg_pos = ImVec2(400 - msg_size.x / 2, 300);
         draw_list->AddText(ImGui::GetFont(), 28, msg_pos, IM_COL32(200, 70, 70, 255), message.c_str());
+        if (!detail.empty()) {
+            ImVec2 detail_size = ImGui::GetFont()->CalcTextSizeA(20, FLT_MAX, 0.0f, detail.c_str());
+            ImVec2 detail_pos = ImVec2(400 - detail_size.x / 2, 345);
+            draw_list->AddText(ImGui::GetFont(), 20, detail_pos, IM_COL32(100, 100, 100, 255), detail.c_str());
+        }
     }
 };
 

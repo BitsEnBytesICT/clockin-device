@@ -1,1046 +1,797 @@
-// main.cpp
-// RFID Attendance System with Signature for Clock-In
-// Clean architecture with state management
-
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cmath>
+#include <curl/curl.h>
+#include <cstdlib>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string>
-#include <vector>
-#include "rfid_reader.h"
-#include "touch_handler.h"
-#include <curl/curl.h>
-#include "api_client.h"
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
-#include <fcntl.h>
 #include <unistd.h>
-#include <stdlib.h>
-#include <linux/input.h>
-#include "assets/fonts/plus_jakarta_sans_wght.h"
+#include <vector>
 
-// Numeric keypad touch areas (password screen) - MUST BE BEFORE ui_renderer.h
+#include "api_worker.h"
+#include "assets/fonts/plus_jakarta_sans_wght.h"
+#include "card_presence.h"
+#include "performance_metrics.h"
+#include "rfid_reader.h"
+#include "signature_pad.h"
+#include "touch_handler.h"
+
 #define KEYPAD_BUTTON_W 120
 #define KEYPAD_BUTTON_H 80
-#define KEYPAD_START_X 205  // Centered for tighter spacing
+#define KEYPAD_START_X 205
 #define KEYPAD_START_Y 190
-#define KEYPAD_SPACING_X 115  // Closer spacing
+#define KEYPAD_SPACING_X 115
 #define KEYPAD_SPACING_Y 90
 
-// RFID removal detection: number of consecutive empty polls to consider the card removed
-#define RFID_REMOVE_FRAMES 10
-
-// Attendance screen button areas
-#define ATTENDANCE_CONFIRM_X 650
-#define ATTENDANCE_CONFIRM_Y 400
-#define ATTENDANCE_CONFIRM_W 140
-#define ATTENDANCE_CONFIRM_H 60
-
-#define ATTENDANCE_BACK_X 650
-#define ATTENDANCE_BACK_Y 10
-#define ATTENDANCE_BACK_W 140
-#define ATTENDANCE_BACK_H 60
-
-// Backlight control (STM32MP157F-DK2)
 #define BACKLIGHT_BRIGHTNESS_PATH "/sys/class/backlight/5a000000.dsi.0/brightness"
 #define BACKLIGHT_MAX_PATH "/sys/class/backlight/5a000000.dsi.0/max_brightness"
 #define BACKLIGHT_FULL_DEFAULT 240
 #define BACKLIGHT_DIM_VALUE 120
-#define BACKLIGHT_DIM_SECONDS 30.0f
-#define BACKLIGHT_OFF_SECONDS 60.0f
-#define BACKLIGHT_TRANSITION_SECONDS 0.5f
+#define BACKLIGHT_DIM_SECONDS 30.0
+#define BACKLIGHT_OFF_SECONDS 60.0
+#define BACKLIGHT_TRANSITION_SECONDS 0.5
 
 #include "ui_renderer.h"
 
-// ====================================================
-// APPLICATION STATE
-// ====================================================
-
 enum AppState {
-    STATE_WAITING_CARD,      // Waiting for RFID card
-    STATE_ATTENDANCE,        // Show last 30 days before signature
-    STATE_SIGNATURE,         // Drawing signature (clock in only)
-    STATE_SUCCESS,           // Show success message
-    STATE_ERROR,             // Show error message
-    STATE_ADMIN_PASSWORD,    // Prompt for admin password
-    STATE_ADMIN              // Admin menu
+    STATE_WAITING_CARD,
+    STATE_PROCESSING,
+    STATE_ATTENDANCE,
+    STATE_SIGNATURE,
+    STATE_SUCCESS,
+    STATE_ERROR,
+    STATE_ADMIN_PASSWORD,
+    STATE_ADMIN
+};
+
+enum class WorkflowRequest {
+    None,
+    Scan,
+    Attendance,
+    Signature
+};
+
+enum class HitTarget {
+    None,
+    Admin,
+    AttendanceBack,
+    AttendanceConfirm,
+    SignatureClear,
+    SignatureCancel,
+    SignatureSubmit,
+    AdminBack,
+    Key1,
+    Key2,
+    Key3,
+    Key4,
+    Key5,
+    Key6,
+    Key7,
+    Key8,
+    Key9
+};
+
+struct GestureState {
+    bool active;
+    bool moved;
+    HitTarget target;
+    ImVec2 start;
+    ImVec2 last;
+
+    GestureState()
+        : active(false), moved(false), target(HitTarget::None), start(0.0f, 0.0f), last(0.0f, 0.0f) {}
+
+    void Clear() {
+        active = false;
+        moved = false;
+        target = HitTarget::None;
+    }
 };
 
 struct AppContext {
     AppState current_state;
-    AppState next_state;
-    
     RFIDReader rfid_reader;
     TouchHandler touch_handler;
-    APIClient api_client;
+    APIWorker api_worker;
     UIRenderer ui_renderer;
-    
-    // User data
+    CardPresenceTracker card_presence;
+    SignaturePad signature;
+    PerformanceMetrics performance;
+    GestureState gesture;
+
     std::string pending_rfid_uid;
     std::string user_name;
     std::string user_department;
-    std::string action;  // "clock_in" or "clock_out"
+    std::string action;
     std::string message;
-
-    // Attendance data
+    std::string error_detail;
+    std::string signature_warning;
+    std::string admin_password_buffer;
+    std::string admin_displayed_rfid;
     std::vector<std::string> attendance_dates;
     std::string attendance_warning;
-    bool attendance_fetch_failed;
-    float attendance_scroll_offset;
-    bool attendance_is_dragging;
-    bool attendance_dragged;
-    ImVec2 attendance_last_touch_pos;
-    TouchState attendance_touch;
-    
-    // Signature data
-    std::vector<std::vector<ImVec2>> signature_strokes;
-    std::vector<ImVec2> current_stroke;
-    bool is_drawing;
-    
-    // Timing
-    float state_timer;
-    float message_duration;
-    // Backlight
-    float inactivity_timer;
+
+    WorkflowRequest request_kind;
+    uint64_t request_id;
+    bool health_online;
+    bool health_known;
+    bool require_card_removal;
+    std::string removal_uid;
+    std::string processing_message;
+    double next_health_check;
+
+    double state_started;
+    double inactivity_seconds;
     bool activity_detected;
+    float attendance_scroll_offset;
+    bool attendance_dragging;
+    int admin_last_digit;
+    double admin_last_digit_time;
     int backlight_max;
     int backlight_current;
-    float backlight_current_f;
+    double backlight_current_f;
     int backlight_target;
-    float backlight_transition_t;
-    float backlight_transition_start;
-    // Admin
-    std::string admin_password_buffer;  // For PIN entry (numeric)
-    bool admin_submit_requested;
-    char admin_input_buf[128];
-    std::string admin_displayed_rfid;
-    ImVec2 admin_touch_start_pos;  // Track start position for button detection
-    bool admin_was_touching;       // Track if touch was active
-    int admin_last_digit;          // Last keypad digit pressed (1-9), -1 for none
-    float admin_last_digit_time;   // Time of last digit press
-    // Attendance screen touch state
-    ImVec2 attendance_touch_start_pos;
-    bool attendance_was_touching;
-    // RFID debouncing - only poll on waiting screen
-    std::string last_processed_rfid_uid;  // Track the card UID that was just processed to prevent duplicates while held
-    bool rfid_card_present;               // True while the same card remains in the field
-    int rfid_no_data_frames;              // Consecutive empty polls used to detect card removal
-    
-    AppContext() : 
-        current_state(STATE_WAITING_CARD),
-        next_state(STATE_WAITING_CARD),
-        is_drawing(false),
-        state_timer(0.0f),
-        message_duration(3.0f),
-        inactivity_timer(0.0f),
-        activity_detected(false),
-        backlight_max(BACKLIGHT_FULL_DEFAULT),
-        backlight_current(-1),
-        backlight_current_f(-1.0f),
-        backlight_target(-1),
-        backlight_transition_t(1.0f),
-        backlight_transition_start(0.0f),
-        admin_submit_requested(false),
-        admin_was_touching(false),
-        rfid_card_present(false),
-        rfid_no_data_frames(0),
-        admin_last_digit(-1),
-        admin_last_digit_time(0.0f),
-        attendance_was_touching(false),
-        attendance_fetch_failed(false),
-        attendance_scroll_offset(0.0f),
-        attendance_is_dragging(false),
-        attendance_dragged(false),
-        attendance_last_touch_pos(0.0f, 0.0f) {
-            admin_input_buf[0] = '\0';
-        }
-    
-    void ChangeState(AppState new_state) {
-        next_state = new_state;
-        state_timer = 0.0f;
-        
-        // Clear RFID debounce when entering WAITING state (fresh start for new card reads)
-        if (new_state == STATE_WAITING_CARD) {
-            // Drain any buffered RFID data so we don't process stale reads
-            rfid_reader.Flush();
-            // Start removal detection fresh; keep last_processed_rfid_uid until card is removed
-            rfid_no_data_frames = 0;
-        }
-        if (new_state == STATE_ADMIN_PASSWORD) {
-            admin_last_digit = -1;
-            admin_last_digit_time = 0.0f;
-        }
+    double backlight_transition_start;
+    double backlight_transition_progress;
+    double backlight_last_write;
+    int display_refresh_hz;
+
+    AppContext()
+        : current_state(STATE_WAITING_CARD),
+          card_presence(1.5),
+          request_kind(WorkflowRequest::None),
+          request_id(0),
+          health_online(false),
+          health_known(false),
+          require_card_removal(false),
+          next_health_check(0.0),
+          state_started(0.0),
+          inactivity_seconds(0.0),
+          activity_detected(false),
+          attendance_scroll_offset(0.0f),
+          attendance_dragging(false),
+          admin_last_digit(-1),
+          admin_last_digit_time(0.0),
+          backlight_max(BACKLIGHT_FULL_DEFAULT),
+          backlight_current(-1),
+          backlight_current_f(-1.0),
+          backlight_target(-1),
+          backlight_transition_start(0.0),
+          backlight_transition_progress(1.0),
+          backlight_last_write(-1.0),
+          display_refresh_hz(0) {
+        attendance_dates.reserve(32);
     }
-    
-    void ClearSignature() {
-        signature_strokes.clear();
-        current_stroke.clear();
-        is_drawing = false;
+
+    bool ApiBusy() const { return request_id != 0; }
+
+    void ChangeState(AppState next, double now_seconds) {
+        if (current_state == next) return;
+        current_state = next;
+        state_started = now_seconds;
+        gesture.Clear();
+        touch_handler.SuppressUntilRelease();
     }
-    
-    void Reset() {
+
+    void ResetWorkflow() {
+        pending_rfid_uid.clear();
         user_name.clear();
         user_department.clear();
         action.clear();
         message.clear();
+        error_detail.clear();
+        signature_warning.clear();
         attendance_dates.clear();
         attendance_warning.clear();
-        attendance_fetch_failed = false;
         attendance_scroll_offset = 0.0f;
-        attendance_is_dragging = false;
-        attendance_dragged = false;
-        for (int i = 0; i < 10; ++i) {
-            attendance_touch.slots[i].active = false;
-            attendance_touch.slots[i].x = 0;
-            attendance_touch.slots[i].y = 0;
-        }
-        attendance_touch.current_slot = 0;
-        ClearSignature();
+        attendance_dragging = false;
+        signature.Clear();
+        request_kind = WorkflowRequest::None;
+        request_id = 0;
+        processing_message.clear();
         admin_password_buffer.clear();
-        admin_submit_requested = false;
-        admin_displayed_rfid.clear();
-        admin_input_buf[0] = '\0';
         admin_last_digit = -1;
-        admin_last_digit_time = 0.0f;
-        attendance_was_touching = false;
-        // NOTE: DO NOT clear last_processed_rfid_uid here!
-        // It is cleared only after the card is removed
+        gesture.Clear();
     }
 };
 
-// Hardcoded admin PIN (numeric)
 static const std::string ADMIN_PASSWORD = "1111";
+static const double MESSAGE_DURATION_SECONDS = 3.0;
+static const float CLICK_MOVEMENT_LIMIT = 10.0f;
 
-// Helper to get keypad button area for digit (1-9)
-bool IsInKeypadButton(float x, float y, int digit) {
-    if (digit < 1 || digit > 9) return false;
-    int row = (digit - 1) / 3;
-    int col = (digit - 1) % 3;
-    float btn_x = KEYPAD_START_X + col * KEYPAD_SPACING_X;
-    float btn_y = KEYPAD_START_Y + row * KEYPAD_SPACING_Y;
-    return (x >= btn_x && x <= btn_x + KEYPAD_BUTTON_W && 
-            y >= btn_y && y <= btn_y + KEYPAD_BUTTON_H);
+static double SteadySeconds() {
+    using Clock = std::chrono::steady_clock;
+    return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
 }
 
-// Back button area on password screen
-bool IsInPasswordBackButton(float x, float y) {
-    return (x >= 650 && x <= 790 && y >= 10 && y <= 70);
+static bool PointInRect(const ImVec2& point, float x, float y, float width, float height) {
+    return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height;
 }
 
-// Back button area on admin screen (same location)
-bool IsInAdminBackButton(float x, float y) {
-    return (x >= 650 && x <= 790 && y >= 10 && y <= 70);
+static float Distance(const ImVec2& a, const ImVec2& b) {
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    return std::sqrt(dx * dx + dy * dy);
 }
 
-static ImFont* LoadJakartaSans(ImGuiIO& io, float size_pixels) {
-    ImFontConfig font_cfg;
-    font_cfg.FontDataOwnedByAtlas = false;
-
-    ImFont* font = io.Fonts->AddFontFromMemoryTTF(
-        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf,
-        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf_len,
-        size_pixels,
-        &font_cfg
-    );
-
-    if (font != nullptr) {
-        printf("+ Loaded embedded font: Plus Jakarta Sans\n");
-        return font;
+static HitTarget TargetAt(AppState state, const ImVec2& position) {
+    if (state == STATE_WAITING_CARD && PointInRect(position, 650, 10, 140, 60)) return HitTarget::Admin;
+    if (state == STATE_ATTENDANCE) {
+        if (PointInRect(position, 650, 10, 140, 60)) return HitTarget::AttendanceBack;
+        if (PointInRect(position, 650, 400, 140, 60)) return HitTarget::AttendanceConfirm;
     }
-
-    printf("- Embedded Jakarta Sans failed to load. Using default font.\n");
-    return nullptr;
+    if (state == STATE_SIGNATURE) {
+        if (PointInRect(position, 650, 10, 140, 60)) return HitTarget::SignatureClear;
+        if (PointInRect(position, 650, 205, 140, 60)) return HitTarget::SignatureCancel;
+        if (PointInRect(position, 650, 400, 140, 60)) return HitTarget::SignatureSubmit;
+    }
+    if (state == STATE_ADMIN_PASSWORD || state == STATE_ADMIN) {
+        if (PointInRect(position, 650, 10, 140, 60)) return HitTarget::AdminBack;
+    }
+    if (state == STATE_ADMIN_PASSWORD) {
+        for (int digit = 1; digit <= 9; ++digit) {
+            const int row = (digit - 1) / 3;
+            const int column = (digit - 1) % 3;
+            const float x = KEYPAD_START_X + column * KEYPAD_SPACING_X;
+            const float y = KEYPAD_START_Y + row * KEYPAD_SPACING_Y;
+            if (PointInRect(position, x, y, KEYPAD_BUTTON_W, KEYPAD_BUTTON_H)) {
+                return static_cast<HitTarget>(static_cast<int>(HitTarget::Key1) + digit - 1);
+            }
+        }
+    }
+    return HitTarget::None;
 }
 
-std::string NormalizeRFIDUID(const std::string& raw_uid) {
-    std::string cleaned = APIClient::clean_rfid_uid(raw_uid);
-    std::string upper;
-    upper.reserve(cleaned.size());
-    for (char c : cleaned) {
-        upper.push_back((char)std::toupper((unsigned char)c));
-    }
+static bool IsSignatureArea(const ImVec2& point) {
+    return PointInRect(point, 50, 150, 550, 270);
+}
 
-    // Test overrides must be explicit at runtime.  Never silently map a real
-    // card to another participant when connected to the production backend.
-    const char* configured_override = std::getenv("BITS_BYTES_RFID_UID_OVERRIDE");
-    if (configured_override != nullptr && configured_override[0] != '\0') {
-        std::string override_uid = APIClient::clean_rfid_uid(configured_override);
-        std::transform(override_uid.begin(), override_uid.end(), override_uid.begin(), [](unsigned char c) {
-            return (char)std::toupper(c);
+static std::string NormalizeRFIDUID(const std::string& uid) {
+    std::string normalized = APIClient::CleanRFID(uid);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    const char* override_value = std::getenv("BITS_BYTES_RFID_UID_OVERRIDE");
+    if (override_value != NULL && override_value[0] != '\0') {
+        normalized = APIClient::CleanRFID(override_value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+            return static_cast<char>(std::toupper(c));
         });
-        return override_uid;
+    }
+    return normalized;
+}
+
+static void QueueIdleLights(AppContext& context) {
+    context.rfid_reader.CancelPendingFeedback();
+    context.rfid_reader.QueueCommand("green_on");
+    context.rfid_reader.QueueCommand("red_off");
+}
+
+static void QueueClockInLights(AppContext& context) {
+    context.rfid_reader.QueueCommand("buzz");
+    context.rfid_reader.QueueCommand("red_on");
+    context.rfid_reader.QueueCommand("green_off");
+}
+
+static void RequireCardRemoval(AppContext& context, const std::string& uid) {
+    context.require_card_removal = true;
+    context.removal_uid = uid;
+}
+
+static void ReturnToWaiting(AppContext& context, double now_seconds) {
+    const bool keep_removal = context.card_presence.IsPresent();
+    const std::string present_uid = context.card_presence.UID();
+    context.ResetWorkflow();
+    if (keep_removal) {
+        RequireCardRemoval(context, present_uid);
+    } else {
+        context.require_card_removal = false;
+        context.removal_uid.clear();
+    }
+    QueueIdleLights(context);
+    context.ChangeState(STATE_WAITING_CARD, now_seconds);
+}
+
+static void ShowError(AppContext& context,
+                      const std::string& message,
+                      bool uncertain,
+                      double now_seconds) {
+    context.message = message.empty() ? "Er is iets misgegaan" : message;
+    context.error_detail = uncertain
+        ? (context.card_presence.IsPresent()
+            ? "Verwijder de kaart en scan opnieuw"
+            : "Scan de kaart opnieuw")
+        : std::string();
+    if (uncertain && context.card_presence.IsPresent()) {
+        RequireCardRemoval(context, context.pending_rfid_uid);
+    }
+    printf("- %s%s\n",
+           context.message.c_str(),
+           uncertain ? "; automatic retry disabled" : "");
+    context.ChangeState(STATE_ERROR, now_seconds);
+}
+
+static bool SubmitJob(AppContext& context,
+                      WorkflowRequest kind,
+                      uint64_t id,
+                      const std::string& processing_message,
+                      double now_seconds) {
+    if (id == 0) {
+        ShowError(context, "Verzoek kon niet worden gestart", false, now_seconds);
+        return false;
+    }
+    context.request_kind = kind;
+    context.request_id = id;
+    context.processing_message = processing_message;
+    context.ChangeState(STATE_PROCESSING, now_seconds);
+    return true;
+}
+
+static void HandleApiResult(AppContext& context, const ApiResult& result, double now_seconds) {
+    if (result.type == ApiJobType::Health) {
+        context.health_known = true;
+        context.health_online = result.IsOk();
+        context.next_health_check = now_seconds + (result.IsOk() ? 60.0 : 15.0);
+        if (context.api_worker.IsMockMode()) {
+            printf("+ Mock API ready (no network requests)\n");
+        } else {
+            printf("%c API %s: %s%s\n",
+                   result.IsOk() ? '+' : '-',
+                   result.IsOk() ? "reachable" : "unavailable",
+                   context.api_worker.GetBaseURL().c_str(),
+                   context.api_worker.HasAPIKey() ? " (Authorization configured)" : " (no API key configured)");
+        }
+        return;
+    }
+    if (!IsCurrentApiResult(context.request_id, result)) return;
+
+    context.health_known = true;
+    context.health_online = result.http_code > 0;
+    context.next_health_check = now_seconds + (context.health_online ? 60.0 : 15.0);
+
+    const WorkflowRequest completed_kind = context.request_kind;
+    context.request_id = 0;
+    context.request_kind = WorkflowRequest::None;
+    context.processing_message.clear();
+
+    if (!result.IsOk()) {
+        if (completed_kind == WorkflowRequest::Attendance && result.outcome != ApiOutcome::Cancelled) {
+            context.attendance_dates.clear();
+            context.attendance_warning = "Aanwezigheid niet beschikbaar";
+            context.ChangeState(STATE_ATTENDANCE, now_seconds);
+            return;
+        }
+        const bool uncertain = result.outcome == ApiOutcome::Uncertain;
+        ShowError(context, result.message, uncertain, now_seconds);
+        return;
     }
 
-    return upper;
+    if (completed_kind == WorkflowRequest::Scan) {
+        context.user_name = result.scan.user_name;
+        context.user_department = result.scan.user_department;
+        context.action = result.scan.action;
+        context.message = result.scan.message;
+        printf("+ %s - %s\n", context.action.c_str(), context.user_name.c_str());
+
+        if (context.action == "clock_out") {
+            context.rfid_reader.QueueCommand("beep");
+            RequireCardRemoval(context, context.pending_rfid_uid);
+            context.ChangeState(STATE_SUCCESS, now_seconds);
+        } else {
+            QueueClockInLights(context);
+            SubmitJob(context,
+                      WorkflowRequest::Attendance,
+                      context.api_worker.SubmitAttendance(context.pending_rfid_uid),
+                      "Aanwezigheid laden...",
+                      now_seconds);
+        }
+        return;
+    }
+
+    if (completed_kind == WorkflowRequest::Attendance) {
+        context.attendance_dates = result.attendance_dates;
+        context.attendance_warning.clear();
+        context.ChangeState(STATE_ATTENDANCE, now_seconds);
+        return;
+    }
+
+    if (completed_kind == WorkflowRequest::Signature) {
+        context.rfid_reader.QueueCommand("buzz");
+        RequireCardRemoval(context, context.pending_rfid_uid);
+        context.ChangeState(STATE_SUCCESS, now_seconds);
+    }
 }
 
-// Confirm button area on attendance screen (bottom-right)
-bool IsInAttendanceConfirmButton(float x, float y) {
-    return (x >= ATTENDANCE_CONFIRM_X && x <= ATTENDANCE_CONFIRM_X + ATTENDANCE_CONFIRM_W &&
-            y >= ATTENDANCE_CONFIRM_Y && y <= ATTENDANCE_CONFIRM_Y + ATTENDANCE_CONFIRM_H);
+static void DrainApiResults(AppContext& context, double now_seconds) {
+    ApiResult result;
+    while (context.api_worker.TryPop(result)) HandleApiResult(context, result, now_seconds);
 }
 
-// Back button area on attendance screen (top-right)
-bool IsInAttendanceBackButton(float x, float y) {
-    return (x >= ATTENDANCE_BACK_X && x <= ATTENDANCE_BACK_X + ATTENDANCE_BACK_W &&
-            y >= ATTENDANCE_BACK_Y && y <= ATTENDANCE_BACK_Y + ATTENDANCE_BACK_H);
+static void DrainRFID(AppContext& context, double now_seconds) {
+    RFIDData card;
+    while (context.rfid_reader.PopCard(card)) {
+        if (!card.valid) continue;
+        const std::string uid = NormalizeRFIDUID(card.uid);
+        if (uid.empty() || uid.size() > 64) {
+            if (uid.size() > 64) fprintf(stderr, "- Ignoring oversized RFID UID\n");
+            continue;
+        }
+        const bool new_presentation = context.card_presence.Observe(uid, now_seconds);
+        context.activity_detected = true;
+
+        if (context.current_state == STATE_ADMIN) {
+            context.admin_displayed_rfid = uid;
+            RequireCardRemoval(context, uid);
+            continue;
+        }
+        if (context.current_state != STATE_WAITING_CARD || context.ApiBusy()) continue;
+        if (!new_presentation) continue;
+        if (context.require_card_removal) {
+            if (uid == context.removal_uid) continue;
+            context.require_card_removal = false;
+            context.removal_uid.clear();
+        }
+
+        context.pending_rfid_uid = uid;
+        RequireCardRemoval(context, uid);
+        printf("RFID Card: %s\n", uid.c_str());
+        SubmitJob(context,
+                  WorkflowRequest::Scan,
+                  context.api_worker.SubmitScan(uid),
+                  "Kaart verwerken...",
+                  now_seconds);
+    }
+
+    if (context.card_presence.Update(now_seconds)) {
+        if (context.require_card_removal) {
+            context.require_card_removal = false;
+            context.removal_uid.clear();
+        }
+    }
 }
 
-int ReadBacklightMax() {
+static void ActivateTarget(AppContext& context, HitTarget target, double now_seconds) {
+    switch (target) {
+        case HitTarget::Admin:
+            context.admin_password_buffer.clear();
+            context.ChangeState(STATE_ADMIN_PASSWORD, now_seconds);
+            break;
+        case HitTarget::AttendanceBack:
+            ReturnToWaiting(context, now_seconds);
+            break;
+        case HitTarget::AttendanceConfirm:
+            context.signature.Clear();
+            context.signature_warning.clear();
+            context.ChangeState(STATE_SIGNATURE, now_seconds);
+            break;
+        case HitTarget::SignatureClear:
+            context.signature.Clear();
+            context.signature_warning.clear();
+            break;
+        case HitTarget::SignatureCancel:
+            ReturnToWaiting(context, now_seconds);
+            break;
+        case HitTarget::SignatureSubmit: {
+            context.signature_warning.clear();
+            if (context.signature.TooComplex()) {
+                context.signature_warning = "Handtekening is te complex; wis en probeer opnieuw";
+                break;
+            }
+            std::string svg;
+            if (!context.signature.SerializeSVG(svg)) {
+                context.signature_warning = context.signature.IsValid()
+                    ? "Handtekening is te groot; wis en probeer opnieuw"
+                    : "Teken eerst uw handtekening";
+                break;
+            }
+            SubmitJob(context,
+                      WorkflowRequest::Signature,
+                      context.api_worker.SubmitSignature(context.pending_rfid_uid, svg),
+                      "Handtekening versturen...",
+                      now_seconds);
+            break;
+        }
+        case HitTarget::AdminBack:
+            context.admin_password_buffer.clear();
+            ReturnToWaiting(context, now_seconds);
+            break;
+        default:
+            if (target >= HitTarget::Key1 && target <= HitTarget::Key9) {
+                const int digit = static_cast<int>(target) - static_cast<int>(HitTarget::Key1) + 1;
+                if (context.admin_password_buffer.size() < ADMIN_PASSWORD.size()) {
+                    context.admin_password_buffer += static_cast<char>('0' + digit);
+                    context.admin_last_digit = digit;
+                    context.admin_last_digit_time = ImGui::GetTime();
+                }
+                if (context.admin_password_buffer.size() == ADMIN_PASSWORD.size()) {
+                    if (context.admin_password_buffer == ADMIN_PASSWORD) {
+                        context.admin_displayed_rfid.clear();
+                        context.ChangeState(STATE_ADMIN, now_seconds);
+                    } else {
+                        context.admin_password_buffer.clear();
+                        ShowError(context, "Pincode onjuist", false, now_seconds);
+                    }
+                }
+            }
+            break;
+    }
+}
+
+static void HandleTouch(AppContext& context, double now_seconds) {
+    const std::vector<TouchEvent>& events = context.touch_handler.Events();
+    for (size_t i = 0; i < events.size(); ++i) {
+        const TouchEvent event = events[i];
+        context.activity_detected = true;
+
+        if (context.current_state == STATE_PROCESSING ||
+            context.current_state == STATE_SUCCESS ||
+            context.current_state == STATE_ERROR) {
+            continue;
+        }
+
+        const bool signature_stroke_event = context.current_state == STATE_SIGNATURE &&
+            (context.signature.IsDrawing() ||
+             (event.type == TouchEventType::Down && IsSignatureArea(event.position)));
+        if (signature_stroke_event) {
+            if (event.type == TouchEventType::Down) {
+                context.gesture.Clear();
+                context.signature.Begin(event.position);
+            } else if (event.type == TouchEventType::Move && context.signature.IsDrawing()) {
+                context.signature.Add(event.position);
+            } else if (event.type == TouchEventType::Up && context.signature.IsDrawing()) {
+                context.signature.End();
+                if (context.signature.TooComplex()) {
+                    context.signature_warning = "Handtekening is te complex; wis en probeer opnieuw";
+                }
+            } else if (event.type == TouchEventType::Cancel) {
+                context.signature.CancelStroke();
+            }
+            continue;
+        }
+
+        if (event.type == TouchEventType::Down) {
+            context.gesture.active = true;
+            context.gesture.moved = false;
+            context.gesture.start = event.position;
+            context.gesture.last = event.position;
+            context.gesture.target = TargetAt(context.current_state, event.position);
+            if (context.current_state == STATE_ATTENDANCE &&
+                PointInRect(event.position, 40, 90, 560, 330)) {
+                context.attendance_dragging = true;
+            }
+        } else if (event.type == TouchEventType::Move && context.gesture.active) {
+            if (Distance(event.position, context.gesture.start) > CLICK_MOVEMENT_LIMIT) context.gesture.moved = true;
+            if (context.current_state == STATE_ATTENDANCE && context.attendance_dragging) {
+                const float total_height = 24.0f * context.attendance_dates.size();
+                const float max_scroll = std::max(0.0f, total_height - 280.0f);
+                context.attendance_scroll_offset += event.position.y - context.gesture.last.y;
+                context.attendance_scroll_offset = std::max(-max_scroll, std::min(0.0f, context.attendance_scroll_offset));
+            }
+            context.gesture.last = event.position;
+        } else if (event.type == TouchEventType::Up && context.gesture.active) {
+            const HitTarget release_target = TargetAt(context.current_state, event.position);
+            const bool valid_click = !context.gesture.moved &&
+                                     context.gesture.target != HitTarget::None &&
+                                     release_target == context.gesture.target;
+            const HitTarget activated = context.gesture.target;
+            context.gesture.Clear();
+            context.attendance_dragging = false;
+            if (valid_click) ActivateTarget(context, activated, now_seconds);
+        } else if (event.type == TouchEventType::Cancel) {
+            context.gesture.Clear();
+            context.attendance_dragging = false;
+            context.signature.CancelStroke();
+        }
+    }
+}
+
+static int ReadBacklightMax() {
 #ifdef DESKTOP_SIM
     return BACKLIGHT_FULL_DEFAULT;
 #else
-    int fd = open(BACKLIGHT_MAX_PATH, O_RDONLY);
-    if (fd < 0) return BACKLIGHT_FULL_DEFAULT;
-    char buf[16] = {0};
-    ssize_t n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) return BACKLIGHT_FULL_DEFAULT;
-    int value = atoi(buf);
-    return value > 0 ? value : BACKLIGHT_FULL_DEFAULT;
+    const int descriptor = open(BACKLIGHT_MAX_PATH, O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0) return BACKLIGHT_FULL_DEFAULT;
+    char value[16] = {0};
+    const ssize_t count = read(descriptor, value, sizeof(value) - 1);
+    close(descriptor);
+    const int parsed = count > 0 ? atoi(value) : 0;
+    return parsed > 0 ? parsed : BACKLIGHT_FULL_DEFAULT;
 #endif
 }
 
-bool WriteBacklightValue(int value) {
+static bool WriteBacklight(int value) {
 #ifdef DESKTOP_SIM
     (void)value;
     return true;
 #else
-    int fd = open(BACKLIGHT_BRIGHTNESS_PATH, O_WRONLY);
-    if (fd < 0) return false;
-    char buf[16];
-    int len = snprintf(buf, sizeof(buf), "%d", value);
-    ssize_t written = write(fd, buf, (size_t)len);
-    close(fd);
-    return written == len;
-#endif
-}
-
-void DeviceDelayUs(unsigned int microseconds) {
-#ifdef DESKTOP_SIM
-    (void)microseconds;
-#else
-    usleep(microseconds);
-#endif
-}
-
-void InitializeAPIBackend() {
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-}
-
-void CleanupAPIBackend() {
-    curl_global_cleanup();
-}
-
-void ApplyBacklightValue(AppContext& ctx, int value) {
-    int clamped = value;
-    if (clamped < 0) clamped = 0;
-    if (clamped > ctx.backlight_max) clamped = ctx.backlight_max;
-    if (clamped == ctx.backlight_current) return;
-    if (WriteBacklightValue(clamped)) {
-        ctx.backlight_current = clamped;
-    }
-}
-
-void SetBacklightImmediate(AppContext& ctx, int value) {
-    int clamped = value;
-    if (clamped < 0) clamped = 0;
-    if (clamped > ctx.backlight_max) clamped = ctx.backlight_max;
-    ctx.backlight_target = clamped;
-    ctx.backlight_transition_start = (float)clamped;
-    ctx.backlight_transition_t = 1.0f;
-    ctx.backlight_current_f = (float)clamped;
-    ApplyBacklightValue(ctx, clamped);
-}
-
-int GetFullBrightness(const AppContext& ctx) {
-    int full_value = BACKLIGHT_FULL_DEFAULT;
-    if (full_value > ctx.backlight_max) full_value = ctx.backlight_max;
-    return full_value;
-}
-
-void MarkActivity(AppContext& ctx) {
-    ctx.activity_detected = true;
-}
-
-void SetBacklightTarget(AppContext& ctx, int value) {
-    int clamped = value;
-    if (clamped < 0) clamped = 0;
-    if (clamped > ctx.backlight_max) clamped = ctx.backlight_max;
-    if (clamped == ctx.backlight_target) return;
-    if (ctx.backlight_current_f < 0.0f) {
-        ctx.backlight_current_f = (float)clamped;
-    }
-    ctx.backlight_transition_start = ctx.backlight_current_f;
-    ctx.backlight_transition_t = 0.0f;
-    ctx.backlight_target = clamped;
-}
-
-void UpdateBacklightTransition(AppContext& ctx, float delta_time) {
-    if (ctx.backlight_target < 0) return;
-    if (ctx.backlight_transition_t < 1.0f) {
-        float step = delta_time / BACKLIGHT_TRANSITION_SECONDS;
-        ctx.backlight_transition_t += step;
-        if (ctx.backlight_transition_t > 1.0f) ctx.backlight_transition_t = 1.0f;
-    }
-    float t = ctx.backlight_transition_t;
-    float current_f = ctx.backlight_transition_start +
-                      (ctx.backlight_target - ctx.backlight_transition_start) * t;
-    ctx.backlight_current_f = current_f;
-    int current_i = (int)(current_f + 0.5f);
-    ApplyBacklightValue(ctx, current_i);
-}
-
-void UpdateBacklightInactivity(AppContext& ctx, float delta_time) {
-    if (ctx.activity_detected) {
-        ctx.inactivity_timer = 0.0f;
-        SetBacklightTarget(ctx, GetFullBrightness(ctx));
-    } else {
-        ctx.inactivity_timer += delta_time;
-        if (ctx.inactivity_timer >= BACKLIGHT_OFF_SECONDS) {
-            SetBacklightTarget(ctx, 0);
-        } else if (ctx.inactivity_timer >= BACKLIGHT_DIM_SECONDS) {
-            int dim_value = BACKLIGHT_DIM_VALUE;
-            if (dim_value > ctx.backlight_max) dim_value = ctx.backlight_max;
-            SetBacklightTarget(ctx, dim_value);
-        }
-    }
-
-    UpdateBacklightTransition(ctx, delta_time);
-}
-
-// ====================================================
-// STATE HANDLERS
-// ====================================================
-
-
-std::string SignatureToBase64PNG(const std::vector<std::vector<ImVec2>>& strokes, int width, int height) {
-    // Signature area bounds from ui_renderer.h
-    const float SIG_MIN_X = 50;
-    const float SIG_MIN_Y = 150;
-    const float SIG_WIDTH = 550;
-    const float SIG_HEIGHT = 270;
-    
-    // Create SVG with normalized coordinates
-    std::stringstream svg;
-    svg << "<svg width=\"" << width << "\" height=\"" << height 
-        << "\" xmlns=\"http://www.w3.org/2000/svg\">";
-    svg << "<rect width=\"100%\" height=\"100%\" fill=\"white\"/>";
-    
-    for (const auto& stroke : strokes) {
-        if (stroke.size() < 2) continue;
-        
-        svg << "<polyline points=\"";
-        for (size_t i = 0; i < stroke.size(); i++) {
-            // Normalize coordinates relative to signature box
-            float normalized_x = ((stroke[i].x - SIG_MIN_X) / SIG_WIDTH) * width;
-            float normalized_y = ((stroke[i].y - SIG_MIN_Y) / SIG_HEIGHT) * height;
-            
-            // Clamp to bounds
-            normalized_x = std::max(0.0f, std::min((float)width, normalized_x));
-            normalized_y = std::max(0.0f, std::min((float)height, normalized_y));
-            
-            svg << normalized_x << "," << normalized_y;
-            if (i < stroke.size() - 1) svg << " ";
-        }
-        svg << "\" stroke=\"black\" stroke-width=\"3\" fill=\"none\"/>";
-    }
-    
-    svg << "</svg>";
-    
-    return svg.str();
-}
-
-void HandleWaitingCardState(AppContext& ctx, float delta_time) {
-    // Check for admin button tap (top-right area = clear button area) using touch handler
-    bool clear_pressed = false;
-    bool submit_pressed = false;
-    bool cancel_pressed = false;
-    std::vector<std::vector<ImVec2>> dummy_strokes;
-    std::vector<ImVec2> dummy_current;
-    bool dummy_drawing = false;
-    ctx.touch_handler.ProcessInput(dummy_strokes, dummy_current, dummy_drawing, clear_pressed, submit_pressed, cancel_pressed);
-
-    if (ctx.touch_handler.IsTouching()) {
-        MarkActivity(ctx);
-    }
-    
-    if (clear_pressed) {
-        MarkActivity(ctx);
-        ctx.admin_password_buffer.clear();
-        ctx.admin_submit_requested = false;
-        ctx.admin_input_buf[0] = '\0';
-        ctx.ChangeState(STATE_ADMIN_PASSWORD);
-        return;
-    }
-
-    RFIDData rfid_data = ctx.rfid_reader.Poll();
-
-    // If no valid data, use consecutive empty polls to detect card removal
-    if (!rfid_data.valid) {
-        if (ctx.rfid_card_present) {
-            ctx.rfid_no_data_frames++;
-            if (ctx.rfid_no_data_frames >= RFID_REMOVE_FRAMES) {
-                ctx.rfid_card_present = false;
-                ctx.last_processed_rfid_uid.clear();
-                ctx.rfid_no_data_frames = 0;
-            }
-        }
-        return;
-    }
-
-    // Valid data received; reset removal counter
-    ctx.rfid_no_data_frames = 0;
-    MarkActivity(ctx);
-
-    // If the same card is still present, ignore it until removed
-    if (ctx.rfid_card_present && rfid_data.uid == ctx.last_processed_rfid_uid) {
-        return;
-    }
-
-    std::string effective_uid = NormalizeRFIDUID(rfid_data.uid);
-    printf("RFID Card: %s\n", effective_uid.c_str());
-    
-    // Store this UID as processed and mark card as present
-    ctx.last_processed_rfid_uid = effective_uid;
-    ctx.rfid_card_present = true;
-        
-        // Send to API to check user
-        ScanResponse response = ctx.api_client.SendScan(effective_uid);
-        
-        if (response.success) {
-            ctx.user_name = response.user_name;
-            ctx.user_department = response.user_department;
-            ctx.action = response.action;
-            ctx.message = response.message;
-            ctx.pending_rfid_uid = effective_uid;
-            
-            printf("+ %s - %s\n", ctx.action.c_str(), ctx.user_name.c_str());
-            
-            if (ctx.action == "clock_in") {
-                // Fetch attendance before signature
-                std::vector<std::string> attendance_dates;
-                bool attendance_ok = ctx.api_client.FetchAttendanceLast30Days(effective_uid, attendance_dates);
-                ctx.attendance_dates = attendance_dates;
-                ctx.attendance_fetch_failed = !attendance_ok;
-                ctx.attendance_warning = attendance_ok ? "" : "Aanwezigheid niet beschikbaar";
-
-                // Going to attendance screen - turn LED RED
-                ctx.api_client.SendDirectCommand("buzz");
-                DeviceDelayUs(200000);
-                ctx.api_client.SendDirectCommand("red_on");
-                DeviceDelayUs(200000);  // 200ms - increased from 50ms
-                ctx.api_client.SendDirectCommand("green_off");
-                ctx.ChangeState(STATE_ATTENDANCE);
-            } else {
-                // Clock out - keep LED GREEN, just buzz
-                ctx.api_client.SendDirectCommand("beep");
-                ctx.ChangeState(STATE_SUCCESS);
-            }
+    const int descriptor = open(BACKLIGHT_BRIGHTNESS_PATH, O_WRONLY | O_CLOEXEC);
+    if (descriptor < 0) return false;
+    char buffer[16];
+    const int length = snprintf(buffer, sizeof(buffer), "%d", value);
+    ssize_t offset = 0;
+    while (offset < length) {
+        const ssize_t written = write(descriptor, buffer + offset, static_cast<size_t>(length - offset));
+        if (written > 0) {
+            offset += written;
+        } else if (written < 0 && errno == EINTR) {
+            continue;
         } else {
-            ctx.message = response.message;
-            ctx.ChangeState(STATE_ERROR);
-        }
-}
-
-void HandleAttendanceState(AppContext& ctx, float delta_time) {
-#ifdef DESKTOP_SIM
-    ImGuiIO& io = ImGui::GetIO();
-    bool is_touching = io.MouseDown[0] && io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f;
-    ImVec2 touch_pos = io.MousePos;
-    if (is_touching) MarkActivity(ctx);
-#else
-    // Touch handling similar to admin password screen
-    int fd = -1;
-    if (ctx.touch_handler.fd < 0) {
-        fd = open(TOUCH_DEV_PATH, O_RDONLY | O_NONBLOCK);
-        if (fd < 0) return;
-    } else {
-        fd = ctx.touch_handler.fd;
-    }
-
-    struct input_event ev;
-    bool is_touching = false;
-    ImVec2 touch_pos = ImVec2(0, 0);
-
-    while (read(fd, &ev, sizeof(ev)) > 0) {
-        if (ev.type == EV_ABS) {
-            switch (ev.code) {
-                case ABS_MT_SLOT:
-                    ctx.attendance_touch.current_slot = ev.value;
-                    if (ctx.attendance_touch.current_slot < 0 || ctx.attendance_touch.current_slot >= 10)
-                        ctx.attendance_touch.current_slot = 0;
-                    break;
-                case ABS_MT_TRACKING_ID:
-                    ctx.attendance_touch.slots[ctx.attendance_touch.current_slot].active = (ev.value >= 0);
-                    break;
-                case ABS_MT_POSITION_X:
-                    ctx.attendance_touch.slots[ctx.attendance_touch.current_slot].y = ev.value;
-                    break;
-                case ABS_MT_POSITION_Y:
-                    ctx.attendance_touch.slots[ctx.attendance_touch.current_slot].x = ev.value;
-                    break;
-            }
-        }
-    }
-
-    int active_slot = -1;
-    for (int i = 0; i < 10; ++i) {
-        if (ctx.attendance_touch.slots[i].active) {
-            active_slot = i;
             break;
         }
     }
-
-    is_touching = (active_slot >= 0);
-    if (is_touching) {
-        MarkActivity(ctx);
-        touch_pos.x = ctx.attendance_touch.slots[active_slot].x;
-        touch_pos.y = ctx.attendance_touch.slots[active_slot].y;
-    }
+    close(descriptor);
+    return offset == length;
 #endif
+}
 
-    const float table_min_x = 40.0f;
-    const float table_max_x = 600.0f;
-    const float table_min_y = 90.0f;
-    const float table_max_y = 420.0f;
-    const float table_content_top = 140.0f;
-    const float row_h = 24.0f;
-    const float visible_height = table_max_y - table_content_top;
-    float total_height = row_h * (float)ctx.attendance_dates.size();
-    float max_scroll = std::max(0.0f, total_height - visible_height);
+static void SetBacklightTarget(AppContext& context, int target) {
+    target = std::max(0, std::min(context.backlight_max, target));
+    if (target == context.backlight_target) return;
+    context.backlight_transition_start = context.backlight_current_f < 0.0
+        ? target
+        : context.backlight_current_f;
+    context.backlight_target = target;
+    context.backlight_transition_progress = 0.0;
+}
 
-    if (is_touching) {
-        MarkActivity(ctx);
-#ifdef DESKTOP_SIM
-        ImVec2 normalized_pos = touch_pos;
-#else
-        ImVec2 normalized_pos = ImVec2(touch_pos.x, SCREEN_HEIGHT - touch_pos.y);
-#endif
-        if (!ctx.attendance_was_touching) {
-            ctx.attendance_touch_start_pos = normalized_pos;
-            ctx.attendance_last_touch_pos = normalized_pos;
-            ctx.attendance_is_dragging = (normalized_pos.x >= table_min_x && normalized_pos.x <= table_max_x &&
-                                          normalized_pos.y >= table_min_y && normalized_pos.y <= table_max_y);
-            ctx.attendance_dragged = false;
-        } else if (ctx.attendance_is_dragging) {
-            float dy = normalized_pos.y - ctx.attendance_last_touch_pos.y;
-            if (std::abs(dy) > 1.5f) {
-                ctx.attendance_dragged = true;
-            }
-            ctx.attendance_scroll_offset -= dy;
-            if (ctx.attendance_scroll_offset < -max_scroll) ctx.attendance_scroll_offset = -max_scroll;
-            if (ctx.attendance_scroll_offset > 0.0f) ctx.attendance_scroll_offset = 0.0f;
-            ctx.attendance_last_touch_pos = normalized_pos;
-        }
+static void UpdateBacklight(AppContext& context, double delta, double now_seconds) {
+    if (context.activity_detected) {
+        context.inactivity_seconds = 0.0;
+        SetBacklightTarget(context, std::min(BACKLIGHT_FULL_DEFAULT, context.backlight_max));
     } else {
-        if (ctx.attendance_was_touching) {
-            ImVec2 start_pos = ctx.attendance_touch_start_pos;
-
-            if (ctx.attendance_dragged) {
-                ctx.attendance_is_dragging = false;
-                ctx.attendance_was_touching = false;
-                return;
-            }
-
-            if (IsInAttendanceBackButton(start_pos.x, start_pos.y)) {
-                ctx.pending_rfid_uid.clear();
-                ctx.Reset();
-                ctx.ChangeState(STATE_WAITING_CARD);
-                ctx.attendance_was_touching = false;
-                return;
-            }
-
-            if (IsInAttendanceConfirmButton(start_pos.x, start_pos.y)) {
-                ctx.ChangeState(STATE_SIGNATURE);
-                ctx.attendance_was_touching = false;
-                return;
-            }
+        context.inactivity_seconds += delta;
+        if (context.inactivity_seconds >= BACKLIGHT_OFF_SECONDS) {
+            SetBacklightTarget(context, 0);
+        } else if (context.inactivity_seconds >= BACKLIGHT_DIM_SECONDS) {
+            SetBacklightTarget(context, std::min(BACKLIGHT_DIM_VALUE, context.backlight_max));
         }
     }
 
-    ctx.attendance_was_touching = is_touching;
+    if (context.backlight_target < 0) return;
+    context.backlight_transition_progress = std::min(
+        1.0, context.backlight_transition_progress + delta / BACKLIGHT_TRANSITION_SECONDS);
+    context.backlight_current_f = context.backlight_transition_start +
+        (context.backlight_target - context.backlight_transition_start) * context.backlight_transition_progress;
+    const int value = static_cast<int>(context.backlight_current_f + 0.5);
+    if (value != context.backlight_current && now_seconds - context.backlight_last_write >= 0.05) {
+        if (WriteBacklight(value)) context.backlight_current = value;
+        context.backlight_last_write = now_seconds;
+    }
 }
 
-void HandleAdminPasswordState(AppContext& ctx, float delta_time) {
-#ifdef DESKTOP_SIM
-    ImGuiIO& io = ImGui::GetIO();
-    bool is_touching = io.MouseDown[0] && io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f;
-    ImVec2 touch_pos = io.MousePos;
-#else
-    // Use touch handler to poll touch events, similar to signature screen
-    bool clear_pressed = false;
-    bool submit_pressed = false;
-    std::vector<std::vector<ImVec2>> dummy_strokes;
-    std::vector<ImVec2> dummy_current;
-    bool dummy_drawing = false;
-    
-    // Reuse touch handler's existing touch reading infrastructure
-    // We'll track touch position ourselves for keypad detection
-    int fd = -1;
-    if (ctx.touch_handler.fd < 0) {
-        fd = open(TOUCH_DEV_PATH, O_RDONLY | O_NONBLOCK);
-        if (fd < 0) return;
+static void UpdateApp(AppContext& context, double delta, double now_seconds) {
+    context.activity_detected = false;
+    context.touch_handler.Update(now_seconds);
+    context.rfid_reader.Update(now_seconds);
+    DrainApiResults(context, now_seconds);
+    DrainRFID(context, now_seconds);
+    HandleTouch(context, now_seconds);
+
+    if (now_seconds >= context.next_health_check &&
+        !context.ApiBusy() && context.current_state == STATE_WAITING_CARD) {
+        context.api_worker.SubmitHealth();
+        context.next_health_check = now_seconds + 15.0;
+    }
+
+    if ((context.current_state == STATE_SUCCESS || context.current_state == STATE_ERROR) &&
+        now_seconds - context.state_started >= MESSAGE_DURATION_SECONDS) {
+        ReturnToWaiting(context, now_seconds);
+    }
+    UpdateBacklight(context, delta, now_seconds);
+}
+
+static void RenderPerformanceOverlay(const AppContext& context) {
+    if (!context.performance.Enabled()) return;
+    const PerformanceSnapshot& metrics = context.performance.Snapshot();
+    char touch_latency[48];
+    if (metrics.touch_latency_ms < 0.0) {
+        snprintf(touch_latency, sizeof(touch_latency), "n/a");
     } else {
-        fd = ctx.touch_handler.fd;
+        snprintf(touch_latency, sizeof(touch_latency), "%.2f ms", metrics.touch_latency_ms);
     }
-    
-    struct input_event ev;
-    bool is_touching = false;
-    ImVec2 touch_pos = ImVec2(0, 0);
-    
-    while (read(fd, &ev, sizeof(ev)) > 0) {
-        if (ev.type == EV_ABS) {
-            if (ev.code == ABS_MT_TRACKING_ID && ev.value >= 0) {
-                is_touching = true;
-            } else if (ev.code == ABS_MT_POSITION_X) {
-                touch_pos.y = ev.value;
-            } else if (ev.code == ABS_MT_POSITION_Y) {
-                touch_pos.x = ev.value;
-            }
-        }
-    }
-#endif
-    
-    // Normalize coordinates like touch handler does
-    if (is_touching) {
-        MarkActivity(ctx);
-#ifdef DESKTOP_SIM
-        ImVec2 normalized_pos = touch_pos;
-#else
-        ImVec2 normalized_pos = ImVec2(touch_pos.x, SCREEN_HEIGHT - touch_pos.y);
-#endif
-        
-        if (!ctx.admin_was_touching) {
-            ctx.admin_touch_start_pos = normalized_pos;
-        }
-    } else {
-        // Touch released - check if it was on a button
-        if (ctx.admin_was_touching) {
-            ImVec2 start_pos = ctx.admin_touch_start_pos;
-            
-            // Check back button
-            if (IsInPasswordBackButton(start_pos.x, start_pos.y)) {
-                ctx.admin_password_buffer.clear();
-                ctx.ChangeState(STATE_WAITING_CARD);
-                ctx.admin_was_touching = false;
-                return;
-            }
-            
-            // Check keypad buttons (1-9)
-            for (int digit = 1; digit <= 9; digit++) {
-                if (IsInKeypadButton(start_pos.x, start_pos.y, digit)) {
-                    if (ctx.admin_password_buffer.length() < 10) {
-                        ctx.admin_password_buffer += std::to_string(digit);
-                        printf("PIN: %s\n", ctx.admin_password_buffer.c_str());
-                        ctx.admin_last_digit = digit;
-                        ctx.admin_last_digit_time = (float)ImGui::GetTime();
-                    }
-                    
-                    // Auto-validate when correct number of digits
-                    if (ctx.admin_password_buffer.length() == ADMIN_PASSWORD.length()) {
-                        if (ctx.admin_password_buffer == ADMIN_PASSWORD) {
-                            ctx.admin_displayed_rfid.clear();
-                            ctx.ChangeState(STATE_ADMIN);
-                        } else {
-                            ctx.message = "Pincode onjuist";
-                            ctx.admin_password_buffer.clear();
-                            ctx.ChangeState(STATE_ERROR);
-                        }
-                    }
-                    ctx.admin_was_touching = false;
-                    return;
-                }
-            }
-        }
-    }
-    
-    ctx.admin_was_touching = is_touching;
+    char lines[768];
+    snprintf(lines, sizeof(lines),
+             "Display: %d Hz (VSync)   FPS: %.1f\n"
+             "Frame ms p50/p95/p99: %.2f / %.2f / %.2f\n"
+             "Update/render/swap p95: %.2f / %.2f / %.2f ms\n"
+             "Touch latency: %s   Signature raw/kept: %zu / %zu\n"
+             "Draw: %d calls, %d vertices, %d indices\n"
+             "Touch/RFID reconnects: %u / %u   API: %s",
+             context.display_refresh_hz,
+             metrics.fps,
+             metrics.frame_p50_ms,
+             metrics.frame_p95_ms,
+             metrics.frame_p99_ms,
+             metrics.update_p95_ms,
+             metrics.render_p95_ms,
+             metrics.swap_p95_ms,
+             touch_latency,
+             context.signature.RawSampleCount(),
+             context.signature.TotalPointCount(),
+             metrics.draw_calls,
+             metrics.vertices,
+             metrics.indices,
+             context.touch_handler.ReconnectCount(),
+             context.rfid_reader.ReconnectCount(),
+             context.ApiBusy() ? "busy" : (context.health_online ? "online" : "offline"));
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(8, 8), ImVec2(460, 155), IM_COL32(15, 15, 15, 225), 5.0f);
+    draw->AddText(ImVec2(16, 15), IM_COL32(255, 255, 255, 255), lines);
 }
 
-void HandleAdminState(AppContext& ctx, float delta_time) {
-    // Poll RFID reader and show UID when card is presented
-    RFIDData rfid_data = ctx.rfid_reader.Poll();
-    if (rfid_data.valid) {
-        MarkActivity(ctx);
-        ctx.admin_displayed_rfid = rfid_data.uid;
-        // Treat card as present so waiting screen doesn't auto-process while it's held
-        ctx.last_processed_rfid_uid = rfid_data.uid;
-        ctx.rfid_card_present = true;
-        ctx.rfid_no_data_frames = 0;
-    }
-
-#ifdef DESKTOP_SIM
-    ImGuiIO& io = ImGui::GetIO();
-    bool is_touching = io.MouseDown[0] && io.MousePos.x >= 0.0f && io.MousePos.y >= 0.0f;
-    ImVec2 touch_pos = io.MousePos;
-#else
-    // Detect back button using same pattern as admin password
-    int fd = -1;
-    if (ctx.touch_handler.fd < 0) {
-        fd = open(TOUCH_DEV_PATH, O_RDONLY | O_NONBLOCK);
-        if (fd < 0) return;
-    } else {
-        fd = ctx.touch_handler.fd;
-    }
-    
-    struct input_event ev;
-    bool is_touching = false;
-    ImVec2 touch_pos = ImVec2(0, 0);
-    
-    while (read(fd, &ev, sizeof(ev)) > 0) {
-        if (ev.type == EV_ABS) {
-            if (ev.code == ABS_MT_TRACKING_ID && ev.value >= 0) {
-                is_touching = true;
-            } else if (ev.code == ABS_MT_POSITION_X) {
-                touch_pos.y = ev.value;
-            } else if (ev.code == ABS_MT_POSITION_Y) {
-                touch_pos.x = ev.value;
-            }
-        }
-    }
-#endif
-    
-    if (is_touching) {
-        MarkActivity(ctx);
-#ifdef DESKTOP_SIM
-        ImVec2 normalized_pos = touch_pos;
-#else
-        ImVec2 normalized_pos = ImVec2(touch_pos.x, SCREEN_HEIGHT - touch_pos.y);
-#endif
-        if (!ctx.admin_was_touching) {
-            ctx.admin_touch_start_pos = normalized_pos;
-        }
-    } else {
-        if (ctx.admin_was_touching) {
-            // Check back button
-            if (IsInAdminBackButton(ctx.admin_touch_start_pos.x, ctx.admin_touch_start_pos.y)) {
-                ctx.ChangeState(STATE_WAITING_CARD);
-            }
-        }
-    }
-    
-    ctx.admin_was_touching = is_touching;
-}
-
-void HandleSignatureState(AppContext& ctx, float delta_time) {
-    bool clear_pressed = false;
-    bool submit_pressed = false;
-    bool cancel_pressed = false;
-    ctx.touch_handler.ProcessInput(
-        ctx.signature_strokes, 
-        ctx.current_stroke, 
-        ctx.is_drawing, 
-        clear_pressed,
-        submit_pressed,
-        cancel_pressed
-    );
-
-    if (ctx.touch_handler.IsTouching() || ctx.is_drawing || clear_pressed || submit_pressed || cancel_pressed) {
-        MarkActivity(ctx);
-    }
-    
-    if (clear_pressed) {
-        ctx.ClearSignature();
-        printf("+ Signature cleared\n");
-    }
-    
-    if (submit_pressed) {
-        if (!ctx.signature_strokes.empty()) {
-            printf("Submitting signature...\n");
-            
-            // CRITICAL: Store the UID before sending, then clear pending_rfid_uid
-            // to prevent any duplicate processing if the card is still in range
-            std::string uid_to_send = ctx.pending_rfid_uid;
-            ctx.pending_rfid_uid.clear();  // Clear immediately - this UID is now being processed
-            
-            // Convert signature to SVG string
-            std::string signature_svg = SignatureToBase64PNG(ctx.signature_strokes, 550, 270);
-            
-            // Send to API
-            if (ctx.api_client.SendClockInWithSignature(uid_to_send, signature_svg)) {
-                printf("+ Clock-in with signature successful\n");
-                
-                // Success! Turn LED back to GREEN
-                ctx.api_client.SendDirectCommand("buzz");
-                DeviceDelayUs(200000);
-                ctx.api_client.SendDirectCommand("red_off");
-                DeviceDelayUs(200000);
-                ctx.api_client.SendDirectCommand("green_on");
-                
-                ctx.ChangeState(STATE_SUCCESS);
-            } else {
-                printf("- Failed to submit signature\n");
-                ctx.message = "Handtekening versturen mislukt";
-                ctx.ChangeState(STATE_ERROR);
-            }
-        } else {
-            printf("- No signature to submit\n");
-            ctx.message = "Teken uw handtekening";
-            ctx.ChangeState(STATE_ERROR);
-        }
-    }
-
-    if (cancel_pressed) {
-        printf("- Signature cancelled\n");
-        ctx.pending_rfid_uid.clear();
-        ctx.Reset();
-        // Return to waiting state and restore LED
-        ctx.api_client.SendDirectCommand("green_on");
-        DeviceDelayUs(50000);
-        ctx.api_client.SendDirectCommand("red_off");
-        ctx.ChangeState(STATE_WAITING_CARD);
-    }
-}
-
-void HandleSuccessState(AppContext& ctx, float delta_time) {
-    ctx.state_timer += delta_time;
-    
-    if (ctx.state_timer >= ctx.message_duration) {
-        // CRITICAL: Clear pending UID BEFORE returning to waiting state
-        // This ensures no duplicate transactions if card is still in range
-        ctx.pending_rfid_uid.clear();
-        
-        ctx.Reset();
-        
-        // Returning to waiting state - ensure GREEN is on
-        ctx.api_client.SendDirectCommand("green_on");
-        DeviceDelayUs(50000);
-        ctx.api_client.SendDirectCommand("red_off");
-        
-        ctx.ChangeState(STATE_WAITING_CARD);
-    }
-}
-
-void HandleErrorState(AppContext& ctx, float delta_time) {
-    ctx.state_timer += delta_time;
-    
-    if (ctx.state_timer >= ctx.message_duration) {
-        // CRITICAL: Clear pending UID BEFORE returning to waiting state
-        ctx.pending_rfid_uid.clear();
-        
-        ctx.Reset();
-        
-        // Returning to waiting state - ensure GREEN is on
-        ctx.api_client.SendDirectCommand("green_on");
-        DeviceDelayUs(50000);
-        ctx.api_client.SendDirectCommand("red_off");
-        
-        ctx.ChangeState(STATE_WAITING_CARD);
-    }
-}
-
-
-
-// ====================================================
-// MAIN LOOP
-// ====================================================
-
-void UpdateApp(AppContext& ctx, float delta_time) {
-    ctx.activity_detected = false;
-
-    // State transition
-    if (ctx.next_state != ctx.current_state) {
-        ctx.current_state = ctx.next_state;
-    }
-    
-    // Handle current state
-    switch (ctx.current_state) {
+static void RenderApp(AppContext& context) {
+    ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    switch (context.current_state) {
         case STATE_WAITING_CARD:
-            HandleWaitingCardState(ctx, delta_time);
+            context.ui_renderer.RenderWaitingScreen(draw);
+            if (context.health_known && !context.health_online) {
+                draw->AddText(ImVec2(18, 448), IM_COL32(205, 75, 60, 255), "API offline - nieuwe scans kunnen mislukken");
+            }
             break;
-
+        case STATE_PROCESSING:
+            context.ui_renderer.RenderProcessingScreen(draw, context.processing_message);
+            break;
         case STATE_ATTENDANCE:
-            HandleAttendanceState(ctx, delta_time);
+            context.ui_renderer.RenderAttendanceScreen(draw,
+                                                       context.user_name,
+                                                       context.attendance_dates,
+                                                       context.attendance_warning,
+                                                       context.attendance_scroll_offset);
             break;
-            
         case STATE_SIGNATURE:
-            HandleSignatureState(ctx, delta_time);
+            context.ui_renderer.RenderSignatureScreen(draw,
+                                                      context.user_name,
+                                                      context.signature.Strokes(),
+                                                      context.signature.CurrentStroke(),
+                                                      context.signature_warning);
             break;
-            
         case STATE_SUCCESS:
-            HandleSuccessState(ctx, delta_time);
+            context.ui_renderer.RenderSuccessScreen(draw, context.user_name, context.action);
             break;
-            
         case STATE_ERROR:
-            HandleErrorState(ctx, delta_time);
+            context.ui_renderer.RenderErrorScreen(draw, context.message, context.error_detail);
             break;
-            
         case STATE_ADMIN_PASSWORD:
-            HandleAdminPasswordState(ctx, delta_time);
+            context.ui_renderer.RenderAdminPasswordScreen(draw,
+                                                          context.admin_password_buffer,
+                                                          context.admin_last_digit,
+                                                          static_cast<float>(context.admin_last_digit_time));
             break;
-
         case STATE_ADMIN:
-            HandleAdminState(ctx, delta_time);
+            context.ui_renderer.RenderAdminScreen(draw, context.admin_displayed_rfid);
             break;
     }
-
-    UpdateBacklightInactivity(ctx, delta_time);
+    RenderPerformanceOverlay(context);
 }
 
-void RenderApp(AppContext& ctx) {
-    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
-    
-    switch (ctx.current_state) {
-        case STATE_WAITING_CARD:
-            ctx.ui_renderer.RenderWaitingScreen(draw_list);
-            break;
-
-        case STATE_ATTENDANCE:
-            ctx.ui_renderer.RenderAttendanceScreen(
-                draw_list,
-                ctx.user_name,
-                ctx.attendance_dates,
-                ctx.attendance_warning,
-                ctx.attendance_scroll_offset
-            );
-            break;
-            
-        case STATE_SIGNATURE:
-            ctx.ui_renderer.RenderSignatureScreen(
-                draw_list,
-                ctx.user_name,
-                ctx.signature_strokes,
-                ctx.current_stroke
-            );
-            break;
-            
-        case STATE_SUCCESS:
-            ctx.ui_renderer.RenderSuccessScreen(
-                draw_list,
-                ctx.user_name,
-                ctx.action
-            );
-            break;
-            
-        case STATE_ERROR:
-            ctx.ui_renderer.RenderErrorScreen(
-                draw_list,
-                ctx.message
-            );
-            break;
-
-        case STATE_ADMIN_PASSWORD:
-            ctx.ui_renderer.RenderAdminPasswordScreen(draw_list, ctx.admin_password_buffer, ctx.admin_last_digit, ctx.admin_last_digit_time);
-            break;
-
-        case STATE_ADMIN:
-            ctx.ui_renderer.RenderAdminScreen(draw_list, ctx.admin_displayed_rfid);
-            break;
-    }
+static ImFont* LoadJakartaSans(ImGuiIO& io, float size) {
+    ImFontConfig config;
+    config.FontDataOwnedByAtlas = false;
+    ImFont* font = io.Fonts->AddFontFromMemoryTTF(
+        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf,
+        _home_derk_imgui_stm32_project_assets_fonts_PlusJakartaSans_wght__ttf_len,
+        size,
+        &config);
+    printf("%c Loaded embedded font: Plus Jakarta Sans\n", font != NULL ? '+' : '-');
+    return font;
 }
 
 #ifdef DESKTOP_SIM
-static constexpr const char* DEFAULT_SIM_RFID_UID = "11F3EF12";
+static const char* DEFAULT_SIM_RFID_UID = "11F3EF12";
 static bool g_show_simulator_help = true;
 static std::string g_last_simulated_card = "none";
 
-const char* GetStateName(AppState state) {
+static const char* StateName(AppState state) {
     switch (state) {
-        case STATE_WAITING_CARD: return "waiting for card";
+        case STATE_WAITING_CARD: return "waiting";
+        case STATE_PROCESSING: return "processing";
         case STATE_ATTENDANCE: return "attendance";
         case STATE_SIGNATURE: return "signature";
         case STATE_SUCCESS: return "success";
@@ -1051,235 +802,344 @@ const char* GetStateName(AppState state) {
     return "unknown";
 }
 
-void ResetSimulationFlow(AppContext& ctx) {
-    ctx.pending_rfid_uid.clear();
-    ctx.Reset();
-    ctx.rfid_card_present = false;
-    ctx.rfid_no_data_frames = 0;
-    ctx.last_processed_rfid_uid.clear();
-    ctx.rfid_reader.Flush();
-    ctx.current_state = STATE_WAITING_CARD;
-    ctx.next_state = STATE_WAITING_CARD;
-    ctx.state_timer = 0.0f;
+static void ResetSimulation(AppContext& context, double now_seconds) {
+    context.card_presence.ForceAbsent();
+    context.require_card_removal = false;
+    context.removal_uid.clear();
+    context.ResetWorkflow();
+    QueueIdleLights(context);
+    context.ChangeState(STATE_WAITING_CARD, now_seconds);
 }
 
-void InjectSimulationCard(AppContext& ctx, const std::string& uid, bool reset_flow) {
-    if (uid.empty()) {
-        printf("- [simulator] no RFID UID configured; use --sim-rfid=UID or STM32_SIM_RFID_UID\n");
+static void InjectSimulationCard(AppContext& context,
+                                 const std::string& uid,
+                                 bool reset,
+                                 double now_seconds) {
+    if (uid.empty()) return;
+    if (context.ApiBusy() || (reset && context.current_state != STATE_WAITING_CARD)) {
+        printf("- [simulator] card ignored while a workflow is active\n");
         return;
     }
-    if (reset_flow) ResetSimulationFlow(ctx);
-    ctx.rfid_reader.InjectCard(uid);
+    if (reset) ResetSimulation(context, now_seconds);
+    context.rfid_reader.InjectCard(uid);
     g_last_simulated_card = uid;
     printf("+ [simulator] card injected: %s\n", uid.c_str());
 }
 
-std::string GetConfiguredSimulationUID(const AppContext& ctx, const char* mock_uid) {
+static std::string ConfiguredSimulationUID(const AppContext& context, const char* mock_uid) {
     const char* configured = std::getenv("STM32_SIM_RFID_UID");
-    if (configured != nullptr && configured[0] != '\0') return configured;
-    return ctx.api_client.IsMockMode() ? mock_uid : DEFAULT_SIM_RFID_UID;
+    if (configured != NULL && configured[0] != '\0') return configured;
+    return context.api_worker.IsMockMode() ? mock_uid : DEFAULT_SIM_RFID_UID;
 }
 
-void HandleSimulatorHotkeys(AppContext& ctx) {
+static void HandleSimulatorHotkeys(AppContext& context, double now_seconds) {
     if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) {
-        InjectSimulationCard(ctx, GetConfiguredSimulationUID(ctx, "SIM_CLOCK_IN"), true);
+        InjectSimulationCard(context, ConfiguredSimulationUID(context, "SIM_CLOCK_IN"), true, now_seconds);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
-        InjectSimulationCard(ctx, GetConfiguredSimulationUID(ctx, "SIM_CLOCK_OUT"), true);
+        InjectSimulationCard(context, ConfiguredSimulationUID(context, "SIM_CLOCK_OUT"), true, now_seconds);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F3, false)) {
-        InjectSimulationCard(ctx, "SIM_UNKNOWN", true);
+        InjectSimulationCard(context, "SIM_UNKNOWN", true, now_seconds);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F4, false)) {
-        InjectSimulationCard(ctx, GetConfiguredSimulationUID(ctx, "SIM_ADMIN_CARD"), false);
+        InjectSimulationCard(context, ConfiguredSimulationUID(context, "SIM_ADMIN_CARD"), false, now_seconds);
     }
     if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
-        ResetSimulationFlow(ctx);
-        g_last_simulated_card = "none";
-        printf("+ [simulator] flow reset\n");
+        if (context.ApiBusy()) {
+            printf("- [simulator] reset ignored while an API write may be in flight\n");
+        } else {
+            ResetSimulation(context, now_seconds);
+            g_last_simulated_card = "none";
+        }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_F12, false)) {
-        g_show_simulator_help = !g_show_simulator_help;
-    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F12, false)) g_show_simulator_help = !g_show_simulator_help;
 }
 
-void RenderSimulatorHelp(const AppContext& ctx) {
-    if (!g_show_simulator_help) return;
-
-    char state_line[160];
-    char card_line[192];
-    snprintf(state_line, sizeof(state_line), "WSL simulator | API: %s | state: %s", ctx.api_client.IsMockMode() ? "MOCK" : "LIVE", GetStateName(ctx.current_state));
-    snprintf(card_line, sizeof(card_line), "Mouse = touch | last card: %s", g_last_simulated_card.c_str());
-
-    ImDrawList* overlay = ImGui::GetForegroundDrawList();
-    overlay->AddRectFilled(ImVec2(8.0f, 8.0f), ImVec2(405.0f, 112.0f), IM_COL32(20, 20, 20, 225), 5.0f);
-    overlay->AddRect(ImVec2(8.0f, 8.0f), ImVec2(405.0f, 112.0f), IM_COL32(90, 90, 90, 255), 5.0f);
-    const ImU32 text_color = IM_COL32(255, 255, 255, 255);
-    overlay->AddText(ImVec2(16.0f, 14.0f), text_color, state_line);
-    overlay->AddText(ImVec2(16.0f, 38.0f), text_color, ctx.api_client.IsMockMode() ? "F1 clock-in  F2 clock-out  F3 unknown card" : "F1 scan 11F3EF12  F2 same card  F3 unknown");
-    overlay->AddText(ImVec2(16.0f, 62.0f), text_color, "F4 inject admin card  F5 reset  F12 hide help");
-    overlay->AddText(ImVec2(16.0f, 86.0f), text_color, card_line);
+static void RenderSimulatorHelp(const AppContext& context) {
+    if (!g_show_simulator_help || context.performance.Enabled()) return;
+    char first[192];
+    char second[192];
+    snprintf(first, sizeof(first), "WSL simulator | API: %s | state: %s",
+             context.api_worker.IsMockMode() ? "MOCK" : "LIVE", StateName(context.current_state));
+    snprintf(second, sizeof(second), "Mouse = touch | last card: %s", g_last_simulated_card.c_str());
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(ImVec2(8, 8), ImVec2(430, 112), IM_COL32(20, 20, 20, 225), 5.0f);
+    draw->AddText(ImVec2(16, 14), IM_COL32_WHITE, first);
+    draw->AddText(ImVec2(16, 38), IM_COL32_WHITE,
+                  context.api_worker.IsMockMode() ? "F1 clock-in  F2 clock-out  F3 unknown" : "F1/F2 scan 11F3EF12  F3 unknown");
+    draw->AddText(ImVec2(16, 62), IM_COL32_WHITE, "F4 held-card injection  F5 reset  F12 help");
+    draw->AddText(ImVec2(16, 86), IM_COL32_WHITE, second);
 }
 #endif
 
-// ====================================================
-// MAIN
-// ====================================================
+static std::string FramebufferPreference() {
+    const char* configured = std::getenv("BITS_BYTES_FRAMEBUFFER_FORMAT");
+#ifdef DESKTOP_SIM
+    const std::string fallback = "rgba8888";
+#else
+    const std::string fallback = "auto";
+#endif
+    if (configured == NULL || configured[0] == '\0') return fallback;
+    const std::string value = configured;
+    if (value == "auto" || value == "rgb565" || value == "rgba8888") return value;
+    fprintf(stderr, "- Unknown BITS_BYTES_FRAMEBUFFER_FORMAT '%s'; using %s\n",
+            configured, fallback.c_str());
+    return fallback;
+}
+
+static void SetCommonWindowHints() {
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+    glfwWindowHint(GLFW_DEPTH_BITS, 0);
+    glfwWindowHint(GLFW_STENCIL_BITS, 0);
+    glfwWindowHint(GLFW_SAMPLES, 0);
+}
+
+static GLFWwindow* CreateApplicationWindow(GLFWmonitor* monitor,
+                                           const char* title,
+                                           std::string& actual_format) {
+    const std::string preference = FramebufferPreference();
+    const bool try_rgb565 = preference == "auto" || preference == "rgb565";
+    if (try_rgb565) {
+        SetCommonWindowHints();
+        glfwWindowHint(GLFW_RED_BITS, 5);
+        glfwWindowHint(GLFW_GREEN_BITS, 6);
+        glfwWindowHint(GLFW_BLUE_BITS, 5);
+        glfwWindowHint(GLFW_ALPHA_BITS, 0);
+        GLFWwindow* window = glfwCreateWindow(800, 480, title, monitor, NULL);
+        if (window != NULL) {
+            actual_format = "rgb565";
+            return window;
+        }
+        fprintf(stderr, "- RGB565 EGL configuration unavailable; falling back to RGBA8888\n");
+    }
+
+    SetCommonWindowHints();
+    glfwWindowHint(GLFW_RED_BITS, 8);
+    glfwWindowHint(GLFW_GREEN_BITS, 8);
+    glfwWindowHint(GLFW_BLUE_BITS, 8);
+    glfwWindowHint(GLFW_ALPHA_BITS, 8);
+    GLFWwindow* window = glfwCreateWindow(800, 480, title, monitor, NULL);
+    if (window != NULL) actual_format = "rgba8888";
+    return window;
+}
 
 int main(int argc, char** argv) {
-    // Initialize CURL
-    InitializeAPIBackend();
-    
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        fprintf(stderr, "- Failed to initialize libcurl\n");
+        return 1;
+    }
+
     printf("================================================\n");
     printf("RFID Attendance System\n");
 #ifdef DESKTOP_SIM
     printf("WSL desktop hardware simulation\n");
 #endif
     printf("================================================\n");
-    
-    // Initialize context
-    AppContext ctx;
-    ctx.backlight_max = ReadBacklightMax();
-    SetBacklightImmediate(ctx, GetFullBrightness(ctx));
-    
-    // Initialize RFID reader FIRST
-    if (!ctx.rfid_reader.Open()) {
-        printf("- Failed to open RFID reader!\n");
-        CleanupAPIBackend();
-        return 1;
+
+    AppContext context;
+    context.backlight_max = ReadBacklightMax();
+    context.backlight_current_f = std::min(BACKLIGHT_FULL_DEFAULT, context.backlight_max);
+    context.backlight_target = static_cast<int>(context.backlight_current_f);
+    WriteBacklight(context.backlight_target);
+    context.backlight_current = context.backlight_target;
+    if (context.api_worker.Start()) {
+        context.api_worker.SubmitHealth();
+    } else {
+        fprintf(stderr, "- API worker could not start; UI will remain available offline\n");
+        context.health_known = true;
+        context.health_online = false;
     }
-    
-    // NOW connect the API client to the RFID reader
-    ctx.api_client.SetRFIDReader(&ctx.rfid_reader);
+    context.next_health_check = SteadySeconds() + 15.0;
 
-    // Test API connection
-    if (!ctx.api_client.TestConnection()) {
-        printf("- Warning: API connection failed. System may not work properly.\n");
-    }
-    
-
-
-    
-    // Initialize GLFW
     if (!glfwInit()) {
-        printf("- Failed to initialize GLFW!\n");
-        CleanupAPIBackend();
+        fprintf(stderr, "- Failed to initialize GLFW\n");
+        context.api_worker.Stop();
+        curl_global_cleanup();
         return 1;
     }
-    
-    const char* glsl_version = "#version 100";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
-    
+
 #ifdef DESKTOP_SIM
-    GLFWmonitor* target_monitor = NULL;
-    const char* window_title = "RFID Attendance - WSL Simulator";
+    GLFWmonitor* monitor = NULL;
+    const char* title = "RFID Attendance - WSL Simulator";
 #else
-    GLFWmonitor* target_monitor = glfwGetPrimaryMonitor();
-    const char* window_title = "RFID Attendance";
+    GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+    const char* title = "RFID Attendance";
 #endif
-    GLFWwindow* window = glfwCreateWindow(800, 480, window_title, target_monitor, NULL);
-    if (!window) {
-        printf("- Failed to create window!\n");
+
+    std::string framebuffer_format;
+    GLFWwindow* window = CreateApplicationWindow(monitor, title, framebuffer_format);
+    if (window == NULL) {
+        fprintf(stderr, "- Failed to create EGL window (requested %s)\n", FramebufferPreference().c_str());
         glfwTerminate();
-        CleanupAPIBackend();
+        context.api_worker.Stop();
+        curl_global_cleanup();
         return 1;
     }
-    
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
-    
-    // Initialize ImGui
+    GLint actual_red_bits = 0;
+    GLint actual_green_bits = 0;
+    GLint actual_blue_bits = 0;
+    GLint actual_alpha_bits = 0;
+    glGetIntegerv(GL_RED_BITS, &actual_red_bits);
+    glGetIntegerv(GL_GREEN_BITS, &actual_green_bits);
+    glGetIntegerv(GL_BLUE_BITS, &actual_blue_bits);
+    glGetIntegerv(GL_ALPHA_BITS, &actual_alpha_bits);
+    GLFWmonitor* refresh_monitor = monitor != NULL ? monitor : glfwGetPrimaryMonitor();
+    const GLFWvidmode* video_mode = refresh_monitor != NULL ? glfwGetVideoMode(refresh_monitor) : NULL;
+    context.display_refresh_hz = video_mode != NULL ? video_mode->refreshRate : 0;
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    // The kiosk has no persistent ImGui window layout. Avoid periodic writes
+    // to the board filesystem (which may also be mounted read-only).
+    io.IniFilename = NULL;
+    io.LogFilename = NULL;
 #ifdef DESKTOP_SIM
     io.MouseDrawCursor = true;
 #else
     io.MouseDrawCursor = false;
 #endif
-
-    ImFont* jakarta_font = LoadJakartaSans(io, 20.0f);
-    if (jakarta_font != nullptr) {
-        io.FontDefault = jakarta_font;
-    }
-    
+    ImFont* font = LoadJakartaSans(io, 20.0f);
+    if (font != NULL) io.FontDefault = font;
     ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init(glsl_version);
-    
+    ImGui_ImplOpenGL3_Init("#version 100");
+
+    printf("+ Framebuffer request: %s\n", framebuffer_format.c_str());
+    printf("+ Framebuffer actual: R%d G%d B%d A%d\n",
+           actual_red_bits, actual_green_bits, actual_blue_bits, actual_alpha_bits);
+    printf("+ Active display refresh: %d Hz (VSync enabled)\n", context.display_refresh_hz);
+    printf("+ API mode: %s, URL: %s\n",
+           context.api_worker.IsMockMode() ? "MOCK" : "LIVE",
+           context.api_worker.GetBaseURL().c_str());
+    printf("+ Performance overlay: %s\n", context.performance.Enabled() ? "enabled" : "disabled");
     printf("+ System ready\n");
+
 #ifdef DESKTOP_SIM
-    printf("+ Simulator API mode: %s\n", ctx.api_client.IsMockMode() ? "MOCK" : "LIVE");
-    printf("+ Simulator keys: F1/F2 scan configured card, F3 unknown, F4 admin card, F5 reset, F12 help\n");
+    double simulator_exit_after = 0.0;
+    int simulator_signature_points = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string argument = argv[i];
-        const std::string prefix = "--sim-rfid=";
-        if (argument.compare(0, prefix.size(), prefix) == 0) {
-            InjectSimulationCard(ctx, argument.substr(prefix.size()), true);
+        const std::string rfid_prefix = "--sim-rfid=";
+        const std::string exit_prefix = "--sim-exit-after=";
+        const std::string signature_prefix = "--sim-signature-points=";
+        if (argument.compare(0, rfid_prefix.size(), rfid_prefix) == 0) {
+            InjectSimulationCard(context, argument.substr(rfid_prefix.size()), true, SteadySeconds());
+        } else if (argument.compare(0, exit_prefix.size(), exit_prefix) == 0) {
+            simulator_exit_after = std::max(0.0, atof(argument.substr(exit_prefix.size()).c_str()));
+        } else if (argument.compare(0, signature_prefix.size(), signature_prefix) == 0) {
+            simulator_signature_points = std::max(0, atoi(argument.substr(signature_prefix.size()).c_str()));
         }
+    }
+    if (simulator_signature_points > 0) {
+        context.ResetWorkflow();
+        context.user_name = "Signature benchmark";
+        context.pending_rfid_uid = "SIM_BENCHMARK";
+        context.action = "clock_in";
+        context.ChangeState(STATE_SIGNATURE, SteadySeconds());
+        context.signature.Begin(ImVec2(60.0f, 285.0f));
+        const int point_limit = std::min(simulator_signature_points,
+                                         static_cast<int>(SignaturePad::MAX_POINTS - 1));
+        for (int point = 1; point <= point_limit; ++point) {
+            const float x = 60.0f + static_cast<float>(point % 530);
+            const float y = 285.0f + std::sin(point * 0.17f) * 115.0f;
+            context.signature.Add(ImVec2(x, y));
+        }
+        printf("+ Simulator signature benchmark: %zu retained points\n",
+               context.signature.TotalPointCount());
     }
 #else
     (void)argc;
     (void)argv;
 #endif
-    printf("================================================\n\n");
-    
-    // Main loop
-    float last_time = glfwGetTime();
-// default is green
-    ctx.api_client.SendDirectCommand("green_on");
-    DeviceDelayUs(50000);
-    ctx.api_client.SendDirectCommand("red_off");
 
+    QueueIdleLights(context);
+#ifdef DESKTOP_SIM
+    const double application_started = SteadySeconds();
+#endif
+    double last_frame = SteadySeconds();
 
     while (!glfwWindowShouldClose(window)) {
+        const double frame_start = SteadySeconds();
+        const double frame_seconds = std::max(0.0, frame_start - last_frame);
+        const double delta = std::min(0.05, frame_seconds);
+        last_frame = frame_start;
+
         glfwPollEvents();
-        
-        // Calculate delta time
-        float current_time = glfwGetTime();
-        float delta_time = current_time - last_time;
-        last_time = current_time;
-        
-        // Start the ImGui frame before processing input.  This makes mouse
-        // events deterministic in the simulator and is also valid on target.
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
 #ifdef DESKTOP_SIM
-        HandleSimulatorHotkeys(ctx);
+        HandleSimulatorHotkeys(context, frame_start);
 #endif
 
-        // Update application logic
-        UpdateApp(ctx, delta_time);
-        
-        RenderApp(ctx);
+        const double update_start = SteadySeconds();
+        UpdateApp(context, delta, frame_start);
+        const double render_start = SteadySeconds();
+        RenderApp(context);
 #ifdef DESKTOP_SIM
-        RenderSimulatorHelp(ctx);
+        RenderSimulatorHelp(context);
 #endif
-        
         ImGui::Render();
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
+        int width = 0;
+        int height = 0;
+        glfwGetFramebufferSize(window, &width, &height);
+        glViewport(0, 0, width, height);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        // A previous clipped draw must never restrict the next framebuffer
-        // clear; otherwise stale black rectangles can survive a state change.
         glDisable(GL_SCISSOR_TEST);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        const double swap_start = SteadySeconds();
         glfwSwapBuffers(window);
+        const double frame_end = SteadySeconds();
+
+        ImDrawData* draw_data = ImGui::GetDrawData();
+        int draw_calls = 0;
+        if (draw_data != NULL) {
+            for (int list_index = 0; list_index < draw_data->CmdListsCount; ++list_index) {
+                draw_calls += draw_data->CmdLists[list_index]->CmdBuffer.Size;
+            }
+        }
+        context.performance.Add(frame_end,
+                                frame_seconds,
+                                (render_start - update_start) * 1000.0,
+                                (swap_start - render_start) * 1000.0,
+                                (frame_end - swap_start) * 1000.0,
+                                context.touch_handler.LastSampleLatencyMs(frame_end),
+                                draw_data != NULL ? draw_data->TotalVtxCount : 0,
+                                draw_data != NULL ? draw_data->TotalIdxCount : 0,
+                                draw_calls);
+#ifdef DESKTOP_SIM
+        if (simulator_exit_after > 0.0 && frame_end - application_started >= simulator_exit_after) {
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+        }
+#endif
     }
-    
-    // Cleanup
+
+#ifdef DESKTOP_SIM
+    if (context.performance.Enabled()) {
+        const PerformanceSnapshot& final_metrics = context.performance.Snapshot();
+        printf("+ Simulator metrics: FPS %.1f, frame p95 %.2f ms, p99 %.2f ms, update p95 %.2f ms\n",
+               final_metrics.fps,
+               final_metrics.frame_p95_ms,
+               final_metrics.frame_p99_ms,
+               final_metrics.update_p95_ms);
+    }
+#endif
+    context.api_worker.Stop();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     glfwDestroyWindow(window);
     glfwTerminate();
-    ctx.rfid_reader.Close();
-    CleanupAPIBackend();
-    
+    context.rfid_reader.Close();
+    curl_global_cleanup();
     return 0;
 }
