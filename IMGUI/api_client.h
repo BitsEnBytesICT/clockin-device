@@ -16,7 +16,8 @@
 #include "api_types.h"
 #include "tiny_json.h"
 
-#define API_BASE_URL "https://management.bitsenbytes.net"
+#define API_BASE_URL "https://management-acc.bitsenbytes.net"
+#define API_DEVELOPMENT_KEY "test-api-key"
 #define API_ATTENDANCE_PATH "/api/attendance_last_30"
 
 class APIClient {
@@ -47,6 +48,7 @@ public:
                 : "/etc/bitsenbytes/rfid-api-key";
             config.api_key = ReadFirstLine(path);
         }
+        if (config.api_key.empty()) config.api_key = API_DEVELOPMENT_KEY;
 
 #ifdef DESKTOP_SIM
         const char* mock_value = std::getenv("STM32_SIM_MOCK_API");
