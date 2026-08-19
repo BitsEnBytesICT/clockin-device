@@ -87,3 +87,4 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 Dear ImGui and GLFW are built from the pinned source under `third_party`; their
 licenses are stored beside the code. The embedded Outfit font subset is covered
 by the SIL Open Font License in `src/ui/assets/OFL.txt`.
+#
