@@ -1,0 +1,7 @@
+build/
+build-*/
+imgui.ini
+*.key
+*.srl
+*.log
+*:Zone.Identifier
