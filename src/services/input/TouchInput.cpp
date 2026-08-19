@@ -145,12 +145,12 @@ ImVec2 TouchInput::Transform(int raw_x, int raw_y) const {
     const float x_range = static_cast<float>(raw_y_max_ - raw_y_min_);
     const float y_range = static_cast<float>(raw_x_max_ - raw_x_min_);
     float x = x_range > 0.0f
-                  ? (static_cast<float>(raw_y - raw_y_min_) / x_range) * kScreenWidth
-                  : static_cast<float>(raw_y);
+                  ? kScreenWidth -
+                        (static_cast<float>(raw_y - raw_y_min_) / x_range) * kScreenWidth
+                  : kScreenWidth - static_cast<float>(raw_y);
     float y = y_range > 0.0f
-                  ? kScreenHeight -
-                        (static_cast<float>(raw_x - raw_x_min_) / y_range) * kScreenHeight
-                  : kScreenHeight - static_cast<float>(raw_x);
+                  ? (static_cast<float>(raw_x - raw_x_min_) / y_range) * kScreenHeight
+                  : static_cast<float>(raw_x);
     x = std::max(0.0f, std::min(static_cast<float>(kScreenWidth), x));
     y = std::max(0.0f, std::min(static_cast<float>(kScreenHeight), y));
     return {x, y};
