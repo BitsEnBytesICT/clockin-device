@@ -76,7 +76,7 @@ variables. They are written directly to protected files and are not added to
 the source tree or printed:
 
 ```bash
-export CLOCKIN_API_BASE_URL='http://YOUR_API_HOST:3000'
+export CLOCKIN_API_BASE_URL='https://management-acc.bitsenbytes.net'
 export CLOCKIN_API_KEY='YOUR_KEY'
 export CLOCKIN_ADMIN_PIN='FOUR_DIGITS'
 bash scripts/deploy.sh root@192.168.11.51

@@ -44,10 +44,12 @@ the service active with zero restarts:
 
 ## Pending manual/connected checks
 
-The configured API at `http://192.168.11.194:3000` was reachable during the
-latest kiosk deployment and reboot. Full clock-in/out, attendance and signed
-workflow checks were not exercised during this service-only change. A person at
-the device must also confirm:
+The configured API at `https://management-acc.bitsenbytes.net` resolves to
+`10.10.1.1` through WireGuard. Its TLS certificate verifies successfully and
+`/api/health` returns HTTP 200. The restarted kiosk reports the management API
+as reachable. Full clock-in/out, attendance and signed workflow checks were not
+exercised during this configuration-only change. A person at the device must
+also confirm:
 
 - ten repeat UID presentations and held-card behavior;
 - all touchscreen corners, scrolling and signature drawing;
