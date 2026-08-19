@@ -32,13 +32,30 @@ docs/                    Architecture, board setup, operations and test evidence
 Generated builds never belong in this tree. WSL writes them to
 `~/.cache/clockin-device/host` and `~/.cache/clockin-device/arm`.
 
-## Build and test
+## Host prerequisites
 
-From Ubuntu 24.04 in WSL, using the Windows directory through
-`/home/derk/clockin-device`:
+On Windows, install WSL 2 with Ubuntu 24.04. Inside Ubuntu, install the normal
+host build tools:
 
 ```bash
-cd /home/derk/clockin-device
+sudo apt update
+sudo apt install -y git cmake build-essential file binutils
+```
+
+Production builds require the matching OpenSTLinux 5.0.8 STM32MP1 SDK. Install
+it below `/opt/st/stm32mp1`; `scripts/build-arm.sh` finds its
+`environment-setup-*` file automatically. If it is installed elsewhere, set
+`STM32_SDK_ENV` to the full environment-setup path before building. The SDK is
+not stored in Git because it is large and machine-specific.
+
+## Build and test
+
+Clone the repository, then run the scripts from any source location visible to
+Ubuntu/WSL:
+
+```bash
+git clone https://github.com/BitsEnBytesICT/attendance-device.git
+cd attendance-device
 bash scripts/test-host.sh
 bash scripts/build-arm.sh
 ```
@@ -70,9 +87,22 @@ Later deployments preserve those board files when the variables are omitted.
 The single device-owned service is `clockin-device.service`; ordinary operating
 system services such as Weston remain unchanged.
 
+## Boot-persistent kiosk
+
+Deployment enables `clockin-device.service` in the board's default
+`multi-user.target`. The service requests `weston-graphical-session.service`,
+waits up to 60 seconds for `/run/user/1000/wayland-0`, and then launches the
+fullscreen application. It uses `Restart=always` with a five-second delay and
+has no systemd restart-rate cutoff, so both crashes and clean unexpected exits
+recover automatically. A deliberate `systemctl stop` still leaves it stopped.
+
+Logs are stored in the system journal rather than an unbounded file in `/root`.
+The buzzer cleanup runs whenever the application exits.
+
 Inspect the application with:
 
 ```bash
+ssh root@192.168.11.51 systemctl is-enabled clockin-device.service
 ssh root@192.168.11.51 systemctl status clockin-device.service
 ssh root@192.168.11.51 journalctl -u clockin-device.service -b --no-pager
 ```
@@ -87,4 +117,3 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 Dear ImGui and GLFW are built from the pinned source under `third_party`; their
 licenses are stored beside the code. The embedded Outfit font subset is covered
 by the SIL Open Font License in `src/ui/assets/OFL.txt`.
-#

@@ -66,3 +66,27 @@ never arguments to the application, part of the service unit or journalled.
 
 `imgui-app.service` and `m4-autostart.service` are disabled once the new service
 is installed. Weston and normal OpenSTLinux services remain.
+
+## Boot-persistent kiosk service
+
+`clockin-device.service` is enabled under `multi-user.target`, which is the
+board's default target. It orders itself after and requests
+`weston-graphical-session.service`, then waits for the actual Wayland socket at
+`/run/user/1000/wayland-0`. This replaces the old fixed 20-second startup delay
+and the obsolete dependency on `m4-autostart.service`.
+
+The application runs as root because SPI, GPIO, PWM, input and backlight access
+are board-level responsibilities. `Restart=always`, a five-second delay and an
+unlimited start interval keep the kiosk alive after an unexpected clean exit,
+crash, unavailable initial Wayland session or repeated failure. A normal
+`systemctl stop clockin-device.service` remains authoritative and does not
+trigger a restart. Output is retained in the system journal, and
+`disable-buzzer.sh` runs after every exit.
+
+Verify the installed boot configuration with:
+
+```bash
+systemctl is-enabled clockin-device.service
+systemctl show clockin-device.service -p ActiveState -p SubState -p Restart -p NRestarts
+systemctl status weston-graphical-session.service clockin-device.service
+```

@@ -87,7 +87,9 @@ ssh "$board" 'set -eu
     systemctl disable --now imgui-app.service 2>/dev/null || true
     systemctl disable --now m4-autostart.service 2>/dev/null || true
     systemctl enable --now clockin-device.service
+    systemctl is-enabled --quiet clockin-device.service
     systemctl is-active --quiet clockin-device.service
+    test "$(systemctl show clockin-device.service -p Restart --value)" = always
     rm -f /tmp/clockin-device.new /tmp/clockin-hardware-diagnostic.new /tmp/clockin-device.service.new /tmp/disable-buzzer.sh.new
     sync
     systemctl show clockin-device.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Result

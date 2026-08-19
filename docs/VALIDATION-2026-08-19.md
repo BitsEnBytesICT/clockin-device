@@ -12,8 +12,8 @@
 
 | File | SHA-256 |
 |---|---|
-| `clockin-device` | `b116e67517428356b074507eaa0943d7eeb5448152af5ec97558b174da3e6193` |
-| `clockin-hardware-diagnostic` | `047b03124c6a65d582b3397f5c27efabcc9c9d0a7028d929aaab8eab2c5897fa` |
+| `clockin-device` | `3b1a8a0f9bcbcdabf87d3f7d727b02aa43b72331b4630fb22ff4e155f3ddcc92` |
+| `clockin-hardware-diagnostic` | `6d9b9bd86ad312b81d4ad367067da7a5981988a3f0b6a0c4c97563320a13cc23` |
 
 - Board configuration directory is root-owned mode `0700`; environment, API key and PIN files are root-owned mode `0600`.
 - Journal scan found no credential values.
@@ -23,7 +23,10 @@
 - Diagnostic emitted the single/triple buzzer patterns and left PWM disabled.
 - `imgui-app.service` is disabled and inactive.
 - `m4-autostart.service` is masked and inactive.
-- `clockin-device.service` is enabled, active and has zero restarts.
+- The kiosk unit passed `systemd-analyze verify` on the board.
+- `clockin-device.service` is enabled, active and configured with `Restart=always`.
+- A forced `SIGKILL` changed the managed PID from `3768` to `3795` after the
+  configured five-second delay and increased `NRestarts` from zero to one.
 - Clean service stop completed in 0.87 seconds and logged both shutdown stages.
 - A stop while the API connection was in progress also completed cleanly; the PWM channel was unexported.
 
@@ -35,12 +38,16 @@ the service active with zero restarts:
 1. `6006fe4d-53e4-4258-81a7-b41efa413c9a`
 2. `c63b2dbb-9b85-4dd6-8918-27bc12690270`
 3. `9450d1e2-c4d7-49da-a4da-ccb437b86735`
+4. `08029efb-5476-4d7e-aabb-16496134df34` — kiosk update validation;
+   Weston and the application were active, the service had zero boot-time
+   restarts, and display, touch, API and MFRC522 initialization completed.
 
 ## Pending manual/connected checks
 
-The configured API at `http://192.168.11.194:3000` timed out during validation.
-Consequently, full clock-in/out, attendance and signed workflow checks remain
-pending until that backend is running. A person at the device must also confirm:
+The configured API at `http://192.168.11.194:3000` was reachable during the
+latest kiosk deployment and reboot. Full clock-in/out, attendance and signed
+workflow checks were not exercised during this service-only change. A person at
+the device must also confirm:
 
 - ten repeat UID presentations and held-card behavior;
 - all touchscreen corners, scrolling and signature drawing;

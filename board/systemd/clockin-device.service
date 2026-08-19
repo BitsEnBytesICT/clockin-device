@@ -1,8 +1,9 @@
 [Unit]
-Description=Clockin device GUI and hardware controller
+Description=Clock-in Device A7 kiosk
 After=weston-graphical-session.service
 Wants=weston-graphical-session.service
 ConditionKernelCommandLine=systemd.mask=m4-autostart.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -11,13 +12,14 @@ WorkingDirectory=/usr/local/lib/clockin-device
 EnvironmentFile=/etc/clockin-device/environment
 Environment=WAYLAND_DISPLAY=wayland-0
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do test -S /run/user/1000/wayland-0 && exit 0; sleep 1; done; exit 1'
+ExecStartPre=/bin/sh -c 'i=0; until test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"; do i=$((i + 1)); test "$i" -ge 60 && { echo "Wayland socket did not become ready" >&2; exit 1; }; sleep 1; done'
 ExecStart=/usr/local/bin/clockin-device
 ExecStopPost=/usr/local/lib/clockin-device/disable-buzzer.sh
-Restart=on-failure
-RestartSec=3
+Restart=always
+RestartSec=5
 TimeoutStopSec=10
 UMask=0077
+SyslogIdentifier=clockin-device
 StandardOutput=journal
 StandardError=journal
 

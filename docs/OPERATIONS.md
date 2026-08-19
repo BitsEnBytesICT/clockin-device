@@ -2,19 +2,19 @@
 
 ## Source and build locations
 
-The Windows `IMGUI` directory is the only editable source. In WSL it is exposed
-through `/home/derk/clockin-device`. Do not copy it into a second Linux source
-tree. Generated builds stay outside the source:
+The cloned `attendance-device` repository is the editable source. It may live
+inside WSL or in a Windows directory exposed to WSL; every script discovers the
+repository root from its own location. Generated builds stay outside the source:
 
 ```text
-/home/derk/.cache/clockin-device/host
-/home/derk/.cache/clockin-device/arm
+~/.cache/clockin-device/host
+~/.cache/clockin-device/arm
 ```
 
 ## Normal release sequence
 
 ```bash
-cd /home/derk/clockin-device
+cd /path/to/attendance-device
 bash scripts/test-host.sh
 bash scripts/build-arm.sh
 ```
@@ -50,6 +50,29 @@ Useful read-only checks:
 ssh root@192.168.11.51 'cat /proc/cmdline; ls -l /dev/spidev* /sys/class/pwm/pwmchip*'
 ssh root@192.168.11.51 'systemctl show clockin-device.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Result'
 ```
+
+## Kiosk startup and recovery
+
+The application is enabled at boot and starts after Weston exposes its Wayland
+socket. It restarts five seconds after any unexpected process exit. The journal
+is the authoritative log; `/root/imgui.log` is no longer used.
+
+```bash
+ssh root@192.168.11.51 'systemctl is-enabled clockin-device.service; systemctl show clockin-device.service -p ActiveState -p SubState -p Restart -p MainPID -p NRestarts'
+ssh root@192.168.11.51 'journalctl -u clockin-device.service -b --no-pager -n 100'
+```
+
+To prove automatic recovery without rebooting, record `MainPID`, kill only the
+managed process, wait at least five seconds, and confirm that `MainPID` changed
+and `NRestarts` increased:
+
+```bash
+ssh root@192.168.11.51 'systemctl show clockin-device.service -p MainPID -p NRestarts; systemctl kill --kill-who=main --signal=SIGKILL clockin-device.service; sleep 8; systemctl show clockin-device.service -p ActiveState -p MainPID -p NRestarts'
+```
+
+`systemctl stop clockin-device.service` deliberately suppresses automatic
+restart. Run `systemctl start clockin-device.service` or reboot to resume kiosk
+operation.
 
 Do not print `/etc/clockin-device/rfid-api-key` or `admin-pin` into a terminal or
 journal. To rotate either value, write it through a protected input method,
