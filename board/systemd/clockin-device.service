@@ -1,0 +1,25 @@
+[Unit]
+Description=Clockin device GUI and hardware controller
+After=weston-graphical-session.service
+Wants=weston-graphical-session.service
+ConditionKernelCommandLine=systemd.mask=m4-autostart.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/lib/clockin-device
+EnvironmentFile=/etc/clockin-device/environment
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do test -S /run/user/1000/wayland-0 && exit 0; sleep 1; done; exit 1'
+ExecStart=/usr/local/bin/clockin-device
+ExecStopPost=/usr/local/lib/clockin-device/disable-buzzer.sh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+UMask=0077
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

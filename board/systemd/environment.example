@@ -1,0 +1,6 @@
+# Install as /etc/clockin-device/environment with mode 0600.
+BITS_BYTES_API_BASE_URL=http://192.168.11.194:3000
+BITS_BYTES_API_KEY_FILE=/etc/clockin-device/rfid-api-key
+BITS_BYTES_ADMIN_PIN_FILE=/etc/clockin-device/admin-pin
+BITS_BYTES_TOUCH_DEVICE=/dev/input/event1
+BITS_BYTES_FRAMEBUFFER_FORMAT=auto

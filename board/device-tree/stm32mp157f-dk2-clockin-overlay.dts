@@ -1,0 +1,84 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "st,stm32mp157f-dk2";
+
+	fragment@0 {
+		target = <&pinctrl>;
+		__overlay__ {
+			clockin_spi5_pins: clockin-spi5-0 {
+				pins1 {
+					/* PF9 SPI5_MOSI and PH6 SPI5_SCK, alternate function 5. */
+					pinmux = <0x5906 0x7606>;
+					bias-disable;
+					drive-push-pull;
+					slew-rate = <1>;
+				};
+
+				pins2 {
+					/* PF8 SPI5_MISO, alternate function 5. */
+					pinmux = <0x5806>;
+					bias-disable;
+				};
+			};
+
+			clockin_spi5_sleep_pins: clockin-spi5-sleep-0 {
+				pins {
+					/* PF9, PH6 and PF8 in analog mode during sleep. */
+					pinmux = <0x5911 0x7611 0x5811>;
+				};
+			};
+
+			clockin_pwm16_pins: clockin-pwm16-0 {
+				pins {
+					/* PF6 TIM16_CH1, alternate function 1. */
+					pinmux = <0x5602>;
+					bias-disable;
+					drive-push-pull;
+					slew-rate = <0>;
+				};
+			};
+
+			clockin_pwm16_sleep_pins: clockin-pwm16-sleep-0 {
+				pins {
+					/* PF6 in analog mode during sleep. */
+					pinmux = <0x5611>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spi5>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			pinctrl-names = "default", "sleep";
+			pinctrl-0 = <&clockin_spi5_pins>;
+			pinctrl-1 = <&clockin_spi5_sleep_pins>;
+			cs-gpios = <&gpiod 14 1>;
+			status = "okay";
+
+			rfid@0 {
+				compatible = "rohm,dh2228fv";
+				reg = <0>;
+				spi-max-frequency = <3000000>;
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&timers16>;
+		__overlay__ {
+			status = "okay";
+
+			pwm {
+				pinctrl-names = "default", "sleep";
+				pinctrl-0 = <&clockin_pwm16_pins>;
+				pinctrl-1 = <&clockin_pwm16_sleep_pins>;
+				status = "okay";
+			};
+		};
+	};
+};
