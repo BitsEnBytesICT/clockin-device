@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "ui/components/ButtonFeedback.hpp"
+#include "ui/components/VectorIcons.hpp"
 
 namespace clockin {
 
@@ -48,7 +49,15 @@ public:
                       const ImVec2& hit_maximum,
                       const char* label,
                       UiControl control,
-                      ButtonVariant variant) const;
+                      ButtonVariant variant,
+                      VectorIcon icon = VectorIcon::None) const;
+    void IconButton(ImDrawList* draw,
+                    const ImVec2& hit_minimum,
+                    const ImVec2& hit_maximum,
+                    VectorIcon icon,
+                    UiControl control,
+                    ButtonVariant variant,
+                    float icon_progress = 0.0f) const;
     static ImU32 WithAlpha(ImU32 color, int alpha);
 
 private:

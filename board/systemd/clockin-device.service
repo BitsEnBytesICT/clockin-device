@@ -1,7 +1,7 @@
 [Unit]
 Description=Clock-in Device A7 kiosk
-After=weston-graphical-session.service
-Wants=weston-graphical-session.service
+After=weston-graphical-session.service wpa_supplicant@wlan0.service udhcpc-wlan0.service
+Wants=weston-graphical-session.service wpa_supplicant@wlan0.service udhcpc-wlan0.service
 ConditionKernelCommandLine=systemd.mask=m4-autostart.service
 StartLimitIntervalSec=0
 
@@ -19,6 +19,8 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=10
 UMask=0077
+RuntimeDirectory=clockin-device
+RuntimeDirectoryMode=0700
 SyslogIdentifier=clockin-device
 StandardOutput=journal
 StandardError=journal

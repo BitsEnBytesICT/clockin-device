@@ -13,8 +13,11 @@ tests do not initialize GLFW, EGL or a desktop window. They cover:
 - signature minimums, simplification, point and payload bounds;
 - Linux multitouch report parsing and 800×480 rotation;
 - MFRC522 register-read SPI framing with a fake transport;
-- single/triple buzzer sequencing with a fake output;
+- semantic buzzer cue pitch, duty cycle, timing and final disabled state;
 - configuration validation and missing-secret behavior;
+- Wi-Fi scan parsing, duplicate SSID selection, security classification and safe encoding;
+- atomic mode-`0600` administrator PIN replacement;
+- admin tab routing, double PIN confirmation and touch-keyboard editing;
 - nested, escaped and malformed JSON.
 
 ## Automated production checks
@@ -32,9 +35,19 @@ until every item below is complete:
 - The service starts with Weston, stays active and does not log credentials.
 - MFRC522 version access succeeds and ten card presentations return one UID.
 - Holding a card produces one workflow; removal plus presentation produces one new workflow.
-- The user confirms single and triple buzzer patterns are audible.
+- The user confirms card, success, warning and error cues are audible but not
+  intrusive.
 - PWM is disabled after sound, process stop and abnormal service restart.
 - Clock-in, attendance, signature, clock-out, admin PIN and error screens work.
+- RFID, PIN and Network admin tabs animate and remain touch responsive.
+- The admin shell returns to Waiting after 120 seconds without touch activity.
+- A changed PIN survives an application restart and the old PIN no longer unlocks.
+- A wrong Wi-Fi password restores the previous association and IPv4 address.
+- A second WPA2/WPA3 or open test network connects and displays the new address.
+- Returning to a saved network does not request its password again.
+- Disconnect is session-only; Forget removes only the explicitly confirmed test network.
+- The production `BitsEnBytes` profile is never used for a Forget test.
+- The management-server indicator changes independently from Wi-Fi and IPv4 status.
 - Touchscreen corners, attendance scrolling and signature drawing are correct.
 - Backlight dims after 30 seconds, turns off after 60 seconds and wakes on activity.
 - Disconnecting the RFID reader does not freeze rendering or touch.

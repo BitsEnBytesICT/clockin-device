@@ -40,6 +40,7 @@ TEST_CASE("configuration accepts externally supplied credentials") {
     CHECK(config.api_base_url == "http://127.0.0.1:3000");
     CHECK(config.api_key == "external-key");
     CHECK(config.admin_pin == "1234");
+    CHECK(!config.admin_pin_persistable);
     CHECK(config.ApiReady());
     CHECK(config.AdminEnabled());
     CHECK(warnings.empty());

@@ -2,7 +2,9 @@
 
 #include "services/api/IApiService.hpp"
 #include "services/hardware/IHardwareService.hpp"
+#include "services/network/INetworkService.hpp"
 #include "ui/components/PageTransition.hpp"
+#include "ui/components/PinKeypad.hpp"
 
 #include <cstdio>
 #include <utility>
@@ -14,14 +16,24 @@ constexpr const char* kBrightnessPath = "/sys/class/backlight/5a000000.dsi.0/bri
 constexpr const char* kMaximumBrightnessPath =
     "/sys/class/backlight/5a000000.dsi.0/max_brightness";
 constexpr double kMessageDurationSeconds = 3.0;
+constexpr double kAdminTimeoutSeconds = 120.0;
+
+bool IsNetworkOperationState(NetworkState state) {
+    return state == NetworkState::Scanning ||
+           state == NetworkState::Associating ||
+           state == NetworkState::AcquiringAddress ||
+           state == NetworkState::RollingBack;
+}
 
 }  // namespace
 
 ApplicationController::ApplicationController(AppConfiguration configuration,
                                              IApiService& api,
-                                             IHardwareService& hardware)
+                                             IHardwareService& hardware,
+                                             INetworkService& network)
     : configuration_(std::move(configuration)),
       hardware_(hardware),
+      network_(network),
       workflow_(api, hardware),
       touch_(configuration_.touch_device),
       backlight_(kBrightnessPath, kMaximumBrightnessPath),
@@ -30,18 +42,45 @@ ApplicationController::ApplicationController(AppConfiguration configuration,
 void ApplicationController::Start(double now_seconds) {
     backlight_.Initialize();
     workflow_.Start(now_seconds);
+    if (!network_.Start()) {
+        std::fprintf(stderr, "Network worker could not start; admin UI remains available\n");
+    }
     waiting_page_.SetApiStatus(workflow_.Session().health_known,
                                workflow_.Session().health_online);
 }
 
-void ApplicationController::Stop() { workflow_.Stop(); }
+void ApplicationController::Stop() {
+    network_.Stop();
+    workflow_.Stop();
+}
 
 void ApplicationController::Update(double delta, double now_seconds) {
     touch_.Update(now_seconds);
     workflow_.Update(navigation_.Current(), now_seconds, *this);
+    NetworkSnapshot network_update;
+    while (network_.TryPop(network_update)) {
+        const bool initialized = network_snapshot_.revision != 0;
+        const bool connection_generation_changed =
+            network_update.connection_generation !=
+            network_snapshot_.connection_generation;
+        const bool operation_failed = initialized &&
+            network_update.state == NetworkState::Error &&
+            network_snapshot_.state != NetworkState::Error &&
+            IsNetworkOperationState(network_snapshot_.state);
+        network_snapshot_ = std::move(network_update);
+        admin_page_.SetNetworkSnapshot(network_snapshot_);
+        if (connection_generation_changed) {
+            workflow_.RequestHealth(now_seconds);
+            if (initialized) hardware_.PlayFeedback(FeedbackCue::Success);
+        } else if (operation_failed) {
+            hardware_.PlayFeedback(FeedbackCue::Error);
+        }
+    }
+    admin_page_.SetApiStatus(workflow_.Session().health_known,
+                             workflow_.Session().health_online);
     Page& active = ActivePage();
     const bool touch_activity = input_router_.Process(
-        touch_.Events(), active, attendance_page_, signature_page_, button_feedback_,
+        touch_.Events(), active, signature_page_, button_feedback_,
         now_seconds,
         [this](const AppEvent& event) { Activate(event); });
     const bool hardware_activity = workflow_.ConsumeActivity();
@@ -51,6 +90,13 @@ void ApplicationController::Update(double delta, double now_seconds) {
          navigation_.Current() == PageId::Error) &&
         now_seconds - navigation_.EnteredAt() >= kMessageDurationSeconds) {
         workflow_.ReturnToWaiting(now_seconds, *this);
+    }
+    if (navigation_.Current() == PageId::Admin) {
+        if (touch_activity) admin_last_activity_ = now_seconds;
+        if (now_seconds - admin_last_activity_ >= kAdminTimeoutSeconds) {
+            admin_page_.ClearSecrets();
+            workflow_.ReturnToWaiting(now_seconds, *this);
+        }
     }
     backlight_.Update(touch_activity || hardware_activity, delta, now_seconds);
 }
@@ -119,6 +165,7 @@ void ApplicationController::ShowWaiting(double now_seconds) {
     attendance_page_.Reset();
     signature_page_.Clear();
     admin_pin_page_.Reset();
+    admin_page_.ClearSecrets();
     ChangePage(PageId::Waiting, now_seconds);
 }
 
@@ -141,7 +188,11 @@ const Page& ApplicationController::ActivePage() const {
 }
 
 void ApplicationController::ChangePage(PageId page, double now_seconds) {
+    if (navigation_.Current() == PageId::Admin && page != PageId::Admin) {
+        admin_page_.ClearSecrets();
+    }
     if (!navigation_.Change(page, now_seconds)) return;
+    if (page == PageId::Admin) admin_last_activity_ = now_seconds;
     input_router_.Reset();
     button_feedback_.Clear();
     touch_.SuppressUntilRelease();
@@ -150,9 +201,15 @@ void ApplicationController::ChangePage(PageId page, double now_seconds) {
 void ApplicationController::Activate(const AppEvent& event) {
     const UiControl control = event.control;
     const double now_seconds = event.occurred_at;
+    if (navigation_.Current() == PageId::Admin) {
+        admin_last_activity_ = now_seconds;
+        HandleAdminAction(admin_page_.Activate(event), now_seconds);
+        return;
+    }
     switch (control) {
         case UiControl::Admin:
             if (!configuration_.AdminEnabled()) {
+                hardware_.PlayFeedback(FeedbackCue::Error);
                 ShowError("Beheerderspincode niet geconfigureerd", {}, now_seconds);
             } else {
                 admin_pin_page_.Reset();
@@ -165,6 +222,7 @@ void ApplicationController::Activate(const AppEvent& event) {
             workflow_.ReturnToWaiting(now_seconds, *this);
             break;
         case UiControl::AttendanceConfirm:
+            hardware_.PlayFeedback(FeedbackCue::Tap);
             signature_page_.Start(workflow_.Session().user_name);
             ChangePage(PageId::Signature, now_seconds);
             break;
@@ -173,22 +231,26 @@ void ApplicationController::Activate(const AppEvent& event) {
             break;
         case UiControl::SignatureSubmit: {
             std::string svg;
-            if (signature_page_.BuildPayload(svg)) {
-                workflow_.SubmitSignature(svg, now_seconds, *this);
+            if (signature_page_.BuildPayload(svg) &&
+                workflow_.SubmitSignature(svg, now_seconds, *this)) {
+                hardware_.PlayFeedback(FeedbackCue::Tap);
             }
             break;
         }
         default:
-            if (control >= UiControl::Key1 && control <= UiControl::Key9) {
-                const int digit = static_cast<int>(control) -
-                                  static_cast<int>(UiControl::Key1) + 1;
-                admin_pin_page_.AppendDigit(digit, ImGui::GetTime());
+            if (PinKeypad::Digit(control) >= 0 || control == UiControl::KeyBackspace) {
+                admin_pin_page_.ApplyKey(control, now_seconds);
                 if (admin_pin_page_.Value().size() == configuration_.admin_pin.size()) {
                     if (admin_pin_page_.Value() == configuration_.admin_pin) {
-                        admin_page_.Reset();
+                        admin_page_.Reset(configuration_.admin_pin_persistable,
+                                          now_seconds);
+                        admin_page_.SetNetworkSnapshot(network_snapshot_);
+                        admin_page_.SetApiStatus(workflow_.Session().health_known,
+                                                 workflow_.Session().health_online);
                         ChangePage(PageId::Admin, now_seconds);
                     } else {
                         admin_pin_page_.Reset();
+                        hardware_.PlayFeedback(FeedbackCue::Error);
                         ShowError("Pincode onjuist", {}, now_seconds);
                     }
                 }

@@ -1,6 +1,5 @@
 #include "app/InputRouter.hpp"
 
-#include "pages/AttendancePage.hpp"
 #include "pages/Page.hpp"
 #include "pages/SignaturePage.hpp"
 #include "ui/components/ButtonFeedback.hpp"
@@ -11,7 +10,6 @@ namespace clockin {
 
 bool InputRouter::Process(const std::vector<TouchEvent>& events,
                           Page& active_page,
-                          AttendancePage& attendance_page,
                           SignaturePage& signature_page,
                           ButtonFeedback& feedback,
                           double now_seconds,
@@ -48,18 +46,13 @@ bool InputRouter::Process(const std::vector<TouchEvent>& events,
             gesture_.last = event.position;
             gesture_.target = active_page.HitTest(event.position);
             feedback.Press(gesture_.target);
-            if (page == PageId::Attendance &&
-                PointInRectangle(event.position, 40, 90, 560, 330)) {
-                attendance_page.BeginDrag();
-            }
+            active_page.BeginScroll(event.position);
         } else if (event.type == TouchEventType::Move && gesture_.active) {
             if (Distance(event.position, gesture_.start) > 10.0f) {
                 gesture_.moved = true;
                 feedback.CancelPress();
             }
-            if (page == PageId::Attendance && attendance_page.Dragging()) {
-                attendance_page.Drag(event.position.y - gesture_.last.y);
-            }
+            active_page.ScrollBy(event.position.y - gesture_.last.y);
             gesture_.last = event.position;
         } else if (event.type == TouchEventType::Up && gesture_.active) {
             const UiControl release_target = active_page.HitTest(event.position);
@@ -69,12 +62,12 @@ bool InputRouter::Process(const std::vector<TouchEvent>& events,
             if (valid_click) feedback.Release(activated, now_seconds);
             else feedback.CancelPress();
             Reset();
-            attendance_page.EndDrag();
-            if (valid_click) activate({activated, now_seconds});
+            active_page.EndScroll();
+            if (valid_click) activate({activated, now_seconds, event.position});
         } else if (event.type == TouchEventType::Cancel) {
             Reset();
             feedback.CancelPress();
-            attendance_page.EndDrag();
+            active_page.EndScroll();
             signature_page.CancelStroke();
         }
     }

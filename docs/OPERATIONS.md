@@ -27,7 +27,8 @@ RPMsg and LED command strings.
 For an already-configured board:
 
 ```bash
-bash scripts/deploy.sh root@192.168.11.51
+bash scripts/migrate-network-control.sh root@10.10.1.20  # once
+bash scripts/deploy.sh root@10.10.1.20
 ```
 
 For the first deployment, export `CLOCKIN_API_BASE_URL`, `CLOCKIN_API_KEY` and
@@ -38,17 +39,17 @@ under `/usr/local/lib/clockin-device/backup`.
 ## Diagnosis
 
 ```bash
-ssh root@192.168.11.51 systemctl status clockin-device.service
-ssh root@192.168.11.51 journalctl -u clockin-device.service -b --no-pager
-ssh root@192.168.11.51 /usr/local/bin/clockin-hardware-diagnostic --buzzer-only
-ssh root@192.168.11.51 /usr/local/bin/clockin-hardware-diagnostic --rfid-only --rfid-seconds=60
+ssh root@10.10.1.20 systemctl status clockin-device.service
+ssh root@10.10.1.20 journalctl -u clockin-device.service -b --no-pager
+ssh root@10.10.1.20 /usr/local/bin/clockin-hardware-diagnostic --buzzer-only
+ssh root@10.10.1.20 /usr/local/bin/clockin-hardware-diagnostic --rfid-only --rfid-seconds=60
 ```
 
 Useful read-only checks:
 
 ```bash
-ssh root@192.168.11.51 'cat /proc/cmdline; ls -l /dev/spidev* /sys/class/pwm/pwmchip*'
-ssh root@192.168.11.51 'systemctl show clockin-device.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Result'
+ssh root@10.10.1.20 'cat /proc/cmdline; ls -l /dev/spidev* /sys/class/pwm/pwmchip*'
+ssh root@10.10.1.20 'systemctl show clockin-device.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Result'
 ```
 
 ## Kiosk startup and recovery
@@ -58,8 +59,8 @@ socket. It restarts five seconds after any unexpected process exit. The journal
 is the authoritative log; `/root/imgui.log` is no longer used.
 
 ```bash
-ssh root@192.168.11.51 'systemctl is-enabled clockin-device.service; systemctl show clockin-device.service -p ActiveState -p SubState -p Restart -p MainPID -p NRestarts'
-ssh root@192.168.11.51 'journalctl -u clockin-device.service -b --no-pager -n 100'
+ssh root@10.10.1.20 'systemctl is-enabled clockin-device.service; systemctl show clockin-device.service -p ActiveState -p SubState -p Restart -p MainPID -p NRestarts'
+ssh root@10.10.1.20 'journalctl -u clockin-device.service -b --no-pager -n 100'
 ```
 
 To prove automatic recovery without rebooting, record `MainPID`, kill only the
@@ -67,7 +68,7 @@ managed process, wait at least five seconds, and confirm that `MainPID` changed
 and `NRestarts` increased:
 
 ```bash
-ssh root@192.168.11.51 'systemctl show clockin-device.service -p MainPID -p NRestarts; systemctl kill --kill-who=main --signal=SIGKILL clockin-device.service; sleep 8; systemctl show clockin-device.service -p ActiveState -p MainPID -p NRestarts'
+ssh root@10.10.1.20 'systemctl show clockin-device.service -p MainPID -p NRestarts; systemctl kill --kill-who=main --signal=SIGKILL clockin-device.service; sleep 8; systemctl show clockin-device.service -p ActiveState -p MainPID -p NRestarts'
 ```
 
 `systemctl stop clockin-device.service` deliberately suppresses automatic
@@ -84,7 +85,7 @@ The deployment backup can restore the previous A7 application without changing
 the boot resources:
 
 ```bash
-ssh root@192.168.11.51 'systemctl stop clockin-device.service && \
+ssh root@10.10.1.20 'systemctl stop clockin-device.service && \
   cp -p /usr/local/lib/clockin-device/backup/clockin-device.previous /usr/local/bin/clockin-device && \
   cp -p /usr/local/lib/clockin-device/backup/clockin-device.service.previous /etc/systemd/system/clockin-device.service && \
   systemctl daemon-reload && systemctl start clockin-device.service'

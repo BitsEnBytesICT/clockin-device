@@ -16,7 +16,9 @@
 #include "pages/WaitingPage.hpp"
 #include "services/display/BacklightController.hpp"
 #include "services/display/PerformanceMetrics.hpp"
+#include "services/config/AdminPinStore.hpp"
 #include "services/input/TouchInput.hpp"
+#include "services/network/NetworkTypes.hpp"
 #include "ui/components/ButtonFeedback.hpp"
 #include "ui/components/PageDrawing.hpp"
 
@@ -24,12 +26,14 @@ namespace clockin {
 
 class IApiService;
 class IHardwareService;
+class INetworkService;
 
 class ApplicationController final : public IWorkflowView {
 public:
     ApplicationController(AppConfiguration configuration,
                           IApiService& api,
-                          IHardwareService& hardware);
+                          IHardwareService& hardware,
+                          INetworkService& network);
 
     void Start(double now_seconds);
     void Stop();
@@ -65,7 +69,9 @@ public:
 private:
     AppConfiguration configuration_;
     IHardwareService& hardware_;
+    INetworkService& network_;
     WorkflowCoordinator workflow_;
+    AdminPinStore pin_store_;
     TouchInput touch_;
     BacklightController backlight_;
     PerformanceMetrics performance_;
@@ -81,12 +87,15 @@ private:
     ErrorPage error_page_;
     AdminPinPage admin_pin_page_;
     AdminPage admin_page_;
+    NetworkSnapshot network_snapshot_;
+    double admin_last_activity_ = 0.0;
     int display_refresh_hz_ = 0;
 
     Page& ActivePage();
     const Page& ActivePage() const;
     void ChangePage(PageId page, double now_seconds);
     void Activate(const AppEvent& event);
+    void HandleAdminAction(AdminAction action, double now_seconds);
     void RenderPerformanceOverlay() const;
 };
 

@@ -82,7 +82,8 @@ void PageDrawing::ActionButton(ImDrawList* draw,
                                const ImVec2& hit_maximum,
                                const char* label,
                                UiControl control,
-                               ButtonVariant variant) const {
+                               ButtonVariant variant,
+                               VectorIcon icon) const {
     const float scale = feedback_ == nullptr ? 1.0f : feedback_->Scale(control, now_seconds_);
     const bool highlighted = feedback_ != nullptr &&
                              (feedback_->IsPressed(control) ||
@@ -112,9 +113,51 @@ void PageDrawing::ActionButton(ImDrawList* draw,
     draw->AddRectFilled(minimum, maximum, fill, 12.0f);
     draw->AddRect(minimum, maximum, border, 12.0f, 0, border_width);
     const ImVec2 label_size = SemiBold()->CalcTextSizeA(20.0f, FLT_MAX, 0.0f, label);
-    draw->AddText(SemiBold(), 20.0f,
-                  {center.x - label_size.x * 0.5f, center.y - label_size.y * 0.5f},
-                  text, label);
+    if (icon == VectorIcon::None) {
+        draw->AddText(SemiBold(), 20.0f,
+                      {center.x - label_size.x * 0.5f,
+                       center.y - label_size.y * 0.5f},
+                      text, label);
+    } else {
+        constexpr float kIconSize = 20.0f;
+        constexpr float kGap = 10.0f;
+        const float total_width = kIconSize + kGap + label_size.x;
+        const float start_x = center.x - total_width * 0.5f;
+        DrawVectorIcon(*draw, icon, {start_x + kIconSize * 0.5f, center.y},
+                       kIconSize, text);
+        draw->AddText(SemiBold(), 20.0f,
+                      {start_x + kIconSize + kGap,
+                       center.y - label_size.y * 0.5f},
+                      text, label);
+    }
+}
+
+void PageDrawing::IconButton(ImDrawList* draw,
+                             const ImVec2& hit_minimum,
+                             const ImVec2& hit_maximum,
+                             VectorIcon icon,
+                             UiControl control,
+                             ButtonVariant variant,
+                             float icon_progress) const {
+    const float scale = feedback_ == nullptr ? 1.0f : feedback_->Scale(control, now_seconds_);
+    const bool highlighted = feedback_ != nullptr &&
+                             (feedback_->IsPressed(control) ||
+                              feedback_->IsAnimating(control, now_seconds_));
+    const ImVec2 center{(hit_minimum.x + hit_maximum.x) * 0.5f,
+                        (hit_minimum.y + hit_maximum.y) * 0.5f};
+    const float radius = std::min(hit_maximum.x - hit_minimum.x,
+                                  hit_maximum.y - hit_minimum.y) * 0.5f * scale;
+    ImU32 fill = highlighted ? theme::PressedSurface : theme::White;
+    ImU32 border = theme::Blue;
+    ImU32 icon_color = theme::Blue;
+    if (variant == ButtonVariant::Primary) {
+        fill = highlighted ? theme::BlueDark : theme::Blue;
+        border = theme::BlueDark;
+        icon_color = theme::White;
+    }
+    draw->AddCircleFilled(center, radius, fill, 32);
+    draw->AddCircle(center, radius, border, 32, variant == ButtonVariant::Quiet ? 1.0f : 2.0f);
+    DrawVectorIcon(*draw, icon, center, radius * 0.92f, icon_color, icon_progress);
 }
 
 }  // namespace clockin

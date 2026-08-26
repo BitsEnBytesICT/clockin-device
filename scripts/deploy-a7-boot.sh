@@ -3,7 +3,7 @@ set -euo pipefail
 
 source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build_root="${CLOCKIN_ARM_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/clockin-device/arm}"
-board="${CLOCKIN_BOARD:-${1:-root@192.168.11.51}}"
+board="${CLOCKIN_BOARD:-${1:-root@10.10.1.20}}"
 stock_dtb="$source_root/board/device-tree/build/stm32mp157f-dk2-stock.dtb"
 clockin_dtb="$source_root/board/device-tree/build/stm32mp157f-dk2-clockin.dtb"
 boot_config="$source_root/board/device-tree/extlinux-clockin.conf"

@@ -17,8 +17,7 @@ public:
     void Update(double now_seconds) override;
     void Stop() override;
     bool PopCard(RfidCard& card) override;
-    void Beep() override;
-    void Buzz() override;
+    void PlayFeedback(FeedbackCue cue) override;
     void CancelFeedback() override;
     bool RfidOpen() const override;
     unsigned int ReconnectCount() const override;

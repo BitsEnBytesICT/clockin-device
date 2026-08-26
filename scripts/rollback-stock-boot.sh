@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-board="${CLOCKIN_BOARD:-${1:-root@192.168.11.51}}"
+board="${CLOCKIN_BOARD:-${1:-root@10.10.1.20}}"
 ssh "$board" 'set -eu
     test -f /boot/clockin-backup/extlinux.conf
     test -f /boot/clockin-backup/stm32mp157f-dk2_extlinux.conf

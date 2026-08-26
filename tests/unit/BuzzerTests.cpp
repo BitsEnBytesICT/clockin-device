@@ -6,38 +6,94 @@
 
 namespace {
 
+struct OutputEvent {
+    bool playing = false;
+    clockin::BuzzerTone tone;
+};
+
 class FakeBuzzerOutput final : public clockin::IBuzzerOutput {
 public:
-    bool SetEnabled(bool enabled, std::string&) override {
-        states.push_back(enabled);
-        return succeeds;
+    bool PlayTone(const clockin::BuzzerTone& tone, std::string&) override {
+        events.push_back({true, tone});
+        return true;
     }
 
-    bool succeeds = true;
-    std::vector<bool> states;
+    bool Stop(std::string&) override {
+        events.push_back({false, {}});
+        return true;
+    }
+
+    std::vector<OutputEvent> events;
 };
+
+void CheckTone(const OutputEvent& event,
+               std::uint32_t frequency_hz,
+               std::uint8_t duty_percent) {
+    CHECK(event.playing);
+    CHECK(event.tone.frequency_hz == frequency_hz);
+    CHECK(event.tone.duty_percent == duty_percent);
+}
 
 }  // namespace
 
-TEST_CASE("single beep always ends with output disabled") {
+TEST_CASE("subtle tap and card cues finish with the buzzer disabled") {
     FakeBuzzerOutput output;
     clockin::BuzzerSequencer buzzer(output);
     std::string error;
-    CHECK(buzzer.Start(clockin::BuzzerPattern::Single, 10.0, error));
-    CHECK(buzzer.Active());
-    CHECK(buzzer.Update(10.051, error));
+
+    CHECK(buzzer.Start(clockin::BuzzerPattern::Tap, 10.0, error));
+    CheckTone(output.events.front(), 2300, 10);
+    CHECK(buzzer.Update(10.016, error));
     CHECK(!buzzer.Active());
-    CHECK(output.states == std::vector<bool>({true, false}));
+    CHECK(!output.events.back().playing);
+
+    output.events.clear();
+    CHECK(buzzer.Start(clockin::BuzzerPattern::CardAccepted, 20.0, error));
+    CheckTone(output.events.front(), 2100, 13);
+    CHECK(buzzer.Update(20.027, error));
+    CHECK(!buzzer.Active());
+    CHECK(!output.events.back().playing);
 }
 
-TEST_CASE("triple buzz has three nonblocking pulses") {
+TEST_CASE("success cue is short restrained and rises in pitch") {
     FakeBuzzerOutput output;
     clockin::BuzzerSequencer buzzer(output);
     std::string error;
-    CHECK(buzzer.Start(clockin::BuzzerPattern::Triple, 0.0, error));
-    for (double now : {0.051, 0.101, 0.151, 0.201, 0.251}) {
-        CHECK(buzzer.Update(now, error));
-    }
-    CHECK(output.states == std::vector<bool>({true, false, true, false, true, false}));
+
+    CHECK(buzzer.Start(clockin::BuzzerPattern::Success, 0.0, error));
+    CHECK(buzzer.Update(0.033, error));
+    CHECK(buzzer.Update(0.047, error));
+    CHECK(buzzer.Update(0.112, error));
+
+    CHECK(output.events.size() == 4);
+    CheckTone(output.events[0], 1750, 15);
+    CHECK(!output.events[1].playing);
+    CheckTone(output.events[2], 2300, 18);
+    CHECK(!output.events[3].playing);
+    CHECK(!buzzer.Active());
+}
+
+TEST_CASE("warning and error cues stay bounded and errors descend in pitch") {
+    FakeBuzzerOutput output;
+    clockin::BuzzerSequencer buzzer(output);
+    std::string error;
+
+    CHECK(buzzer.Start(clockin::BuzzerPattern::Warning, 0.0, error));
+    CHECK(buzzer.Update(0.036, error));
+    CHECK(buzzer.Update(0.076, error));
+    CHECK(buzzer.Update(0.121, error));
+    CHECK(output.events.size() == 4);
+    CheckTone(output.events[0], 1500, 13);
+    CheckTone(output.events[2], 1500, 13);
+
+    output.events.clear();
+    CHECK(buzzer.Start(clockin::BuzzerPattern::Error, 1.0, error));
+    CHECK(buzzer.Update(1.056, error));
+    CHECK(buzzer.Update(1.081, error));
+    CHECK(buzzer.Update(1.166, error));
+    CHECK(output.events.size() == 4);
+    CheckTone(output.events[0], 1700, 15);
+    CheckTone(output.events[2], 1250, 15);
+    CHECK(!output.events.back().playing);
     CHECK(!buzzer.Active());
 }

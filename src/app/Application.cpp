@@ -4,6 +4,7 @@
 #include "platform/linux/DisplayWindow.hpp"
 #include "services/api/ApiWorker.hpp"
 #include "services/hardware/HardwareService.hpp"
+#include "services/network/NetworkService.hpp"
 #include "ui/assets/UiAssets.hpp"
 
 #include <GLFW/glfw3.h>
@@ -47,11 +48,12 @@ public:
     explicit Impl(AppConfiguration value)
         : configuration(std::move(value)),
           api(configuration.api_base_url, configuration.api_key),
-          controller(configuration, api, hardware) {}
+          controller(configuration, api, hardware, network) {}
 
     AppConfiguration configuration;
     ApiWorker api;
     HardwareService hardware;
+    NetworkService network;
     ApplicationController controller;
     DisplayWindow display;
 };

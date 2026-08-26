@@ -18,6 +18,7 @@ src/pages/               One class and private state per screen
 src/services/api/        Bounded asynchronous API client and JSON parser
 src/services/hardware/   RFID and non-blocking buzzer services
 src/services/input/      Linux multitouch parsing and coordinate rotation
+src/services/network/    Asynchronous wpa_supplicant control and Wi-Fi parsing
 src/services/display/    Backlight and optional performance metrics
 src/platform/linux/      SPI, GPIO, PWM, Wayland/EGL and board discovery
 src/domain/              Platform-independent UID/card rules
@@ -79,13 +80,27 @@ the source tree or printed:
 export CLOCKIN_API_BASE_URL='https://management-acc.bitsenbytes.net'
 export CLOCKIN_API_KEY='YOUR_KEY'
 export CLOCKIN_ADMIN_PIN='FOUR_DIGITS'
-bash scripts/deploy.sh root@192.168.11.51
+bash scripts/deploy.sh root@10.10.1.20
 unset CLOCKIN_API_KEY CLOCKIN_ADMIN_PIN
 ```
 
 Later deployments preserve those board files when the variables are omitted.
 The single device-owned service is `clockin-device.service`; ordinary operating
 system services such as Weston remain unchanged.
+
+Before the first release containing on-screen Wi-Fi management, enable the
+existing `wpa_supplicant` control socket once. The migration preserves the
+active network, waits for association and IPv4, and automatically restores the
+original configuration if either check fails:
+
+```bash
+bash scripts/migrate-network-control.sh root@10.10.1.20
+```
+
+The administrator screen then provides three tabs: RFID diagnostics, protected
+four-digit PIN rotation, and Wi-Fi management. Wi-Fi changes happen on a
+background worker so rendering and RFID remain responsive. See
+[docs/NETWORKING.md](docs/NETWORKING.md) for security and recovery details.
 
 ## Boot-persistent kiosk
 
@@ -102,15 +117,18 @@ The buzzer cleanup runs whenever the application exits.
 Inspect the application with:
 
 ```bash
-ssh root@192.168.11.51 systemctl is-enabled clockin-device.service
-ssh root@192.168.11.51 systemctl status clockin-device.service
-ssh root@192.168.11.51 journalctl -u clockin-device.service -b --no-pager
+ssh root@10.10.1.20 systemctl is-enabled clockin-device.service
+ssh root@10.10.1.20 systemctl status clockin-device.service
+ssh root@10.10.1.20 journalctl -u clockin-device.service -b --no-pager
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
 [docs/BOARD_SETUP.md](docs/BOARD_SETUP.md),
+[docs/NETWORKING.md](docs/NETWORKING.md),
 [docs/OPERATIONS.md](docs/OPERATIONS.md) and
-[docs/TESTING.md](docs/TESTING.md) before changing board or boot resources.
+[docs/TESTING.md](docs/TESTING.md) before changing board or boot resources. The
+latest admin/network evidence and remaining physical checks are recorded in
+[docs/VALIDATION-2026-08-26-ADMIN.md](docs/VALIDATION-2026-08-26-ADMIN.md).
 
 ## Dependencies and licenses
 

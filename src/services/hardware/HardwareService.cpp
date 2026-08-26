@@ -2,6 +2,7 @@
 
 #include "platform/linux/LinuxGpioOutput.hpp"
 #include "platform/linux/LinuxPwm.hpp"
+#include "platform/linux/LinuxPwmBuzzerOutput.hpp"
 #include "platform/linux/LinuxSpiDevice.hpp"
 #include "services/hardware/rfid/Mfrc522.hpp"
 #include "services/hardware/buzzer/BuzzerSequencer.hpp"
@@ -17,28 +18,33 @@ namespace clockin {
 namespace {
 
 constexpr std::size_t kMaxCardEvents = 16;
-constexpr std::size_t kMaxFeedbackEvents = 16;
-enum class FeedbackEvent { Beep, Buzz };
+constexpr std::size_t kMaxFeedbackEvents = 6;
 
 double Seconds(const std::chrono::steady_clock::time_point& value) {
     return std::chrono::duration<double>(value.time_since_epoch()).count();
 }
 
-class PwmBuzzerOutput final : public IBuzzerOutput {
-public:
-    explicit PwmBuzzerOutput(LinuxPwm& pwm) : pwm_(pwm) {}
-
-    bool SetEnabled(bool enabled, std::string& error) override {
-        if (enabled && ((!pwm_.IsOpen() && !pwm_.OpenTim16Channel1(error)) ||
-                        !pwm_.Configure(500000, 100000, error))) {
-            return false;
-        }
-        return pwm_.SetEnabled(enabled, error);
+int FeedbackPriority(FeedbackCue cue) {
+    switch (cue) {
+        case FeedbackCue::Tap: return 0;
+        case FeedbackCue::CardAccepted: return 1;
+        case FeedbackCue::Warning: return 2;
+        case FeedbackCue::Success: return 3;
+        case FeedbackCue::Error: return 4;
     }
+    return 0;
+}
 
-private:
-    LinuxPwm& pwm_;
-};
+BuzzerPattern PatternFor(FeedbackCue cue) {
+    switch (cue) {
+        case FeedbackCue::Tap: return BuzzerPattern::Tap;
+        case FeedbackCue::CardAccepted: return BuzzerPattern::CardAccepted;
+        case FeedbackCue::Success: return BuzzerPattern::Success;
+        case FeedbackCue::Warning: return BuzzerPattern::Warning;
+        case FeedbackCue::Error: return BuzzerPattern::Error;
+    }
+    return BuzzerPattern::Tap;
+}
 
 }  // namespace
 
@@ -51,7 +57,7 @@ public:
     std::atomic<unsigned int> cancel_generation{0};
     mutable std::mutex mutex;
     std::deque<RfidCard> cards;
-    std::deque<FeedbackEvent> feedback;
+    std::deque<FeedbackCue> feedback;
     std::string last_error;
     std::thread worker;
 
@@ -66,7 +72,7 @@ public:
         cards.push_back({uid, !uid.empty()});
     }
 
-    bool PopFeedback(FeedbackEvent& event) {
+    bool PopFeedback(FeedbackCue& event) {
         std::lock_guard<std::mutex> lock(mutex);
         if (feedback.empty()) return false;
         event = feedback.front();
@@ -81,7 +87,7 @@ void HardwareService::Impl::Run() {
     LinuxSpiDevice spi;
     LinuxGpioOutput reset;
     LinuxPwm pwm;
-    PwmBuzzerOutput buzzer_output(pwm);
+    LinuxPwmBuzzerOutput buzzer_output(pwm);
     BuzzerSequencer buzzer(buzzer_output);
     Mfrc522 reader(spi);
     bool ever_connected = false;
@@ -104,13 +110,10 @@ void HardwareService::Impl::Run() {
             std::fprintf(stderr, "Buzzer unavailable: %s\n", buzzer_error.c_str());
         }
         if (!buzzer.Active()) {
-            FeedbackEvent event;
+            FeedbackCue event;
             if (PopFeedback(event)) {
                 std::string error;
-                const BuzzerPattern pattern = event == FeedbackEvent::Buzz
-                                                  ? BuzzerPattern::Triple
-                                                  : BuzzerPattern::Single;
-                if (!buzzer.Start(pattern, Seconds(now), error)) {
+                if (!buzzer.Start(PatternFor(event), Seconds(now), error)) {
                     SetError(error);
                     std::fprintf(stderr, "Buzzer unavailable: %s\n", error.c_str());
                 }
@@ -199,18 +202,23 @@ bool HardwareService::PopCard(RfidCard& card) {
     return true;
 }
 
-void HardwareService::Beep() {
+void HardwareService::PlayFeedback(FeedbackCue cue) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->feedback.size() < kMaxFeedbackEvents) {
-        impl_->feedback.push_back(FeedbackEvent::Beep);
-    }
-}
+    if (cue == FeedbackCue::Tap && !impl_->feedback.empty()) return;
+    if (!impl_->feedback.empty() && impl_->feedback.back() == cue) return;
 
-void HardwareService::Buzz() {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    if (impl_->feedback.size() < kMaxFeedbackEvents) {
-        impl_->feedback.push_back(FeedbackEvent::Buzz);
+    const int priority = FeedbackPriority(cue);
+    if (priority >= FeedbackPriority(FeedbackCue::Warning)) {
+        for (auto item = impl_->feedback.begin(); item != impl_->feedback.end();) {
+            if (FeedbackPriority(*item) < priority) item = impl_->feedback.erase(item);
+            else ++item;
+        }
     }
+    if (impl_->feedback.size() >= kMaxFeedbackEvents) {
+        if (priority < FeedbackPriority(impl_->feedback.front())) return;
+        impl_->feedback.pop_front();
+    }
+    impl_->feedback.push_back(cue);
 }
 
 void HardwareService::CancelFeedback() {

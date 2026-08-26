@@ -23,6 +23,9 @@ public:
     virtual ~Page() = default;
     virtual PageId Id() const = 0;
     virtual UiControl HitTest(const ImVec2&) const { return UiControl::None; }
+    virtual bool BeginScroll(const ImVec2&) { return false; }
+    virtual void ScrollBy(float) {}
+    virtual void EndScroll() {}
     virtual void Render(ImDrawList& draw, PageDrawing& drawing) const = 0;
 };
 

@@ -13,12 +13,13 @@ public:
     void Render(ImDrawList& draw, PageDrawing& drawing) const override;
     void Reset();
     void AppendDigit(int digit, double ui_time);
+    void ApplyKey(UiControl control, double ui_time);
     const std::string& Value() const { return value_; }
 
 private:
     std::string value_;
-    int last_digit_ = -1;
-    double last_digit_time_ = 0.0;
+    UiControl last_key_ = UiControl::None;
+    double last_key_time_ = 0.0;
 };
 
 }  // namespace clockin

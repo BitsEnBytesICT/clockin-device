@@ -64,9 +64,17 @@ AppConfiguration AppConfiguration::Load(std::vector<std::string>* warnings) {
     config.api_key = ReadSecret("BITS_BYTES_API_KEY",
                                 "BITS_BYTES_API_KEY_FILE",
                                 "/etc/clockin-device/rfid-api-key");
-    config.admin_pin = ReadSecret("BITS_BYTES_ADMIN_PIN",
-                                  "BITS_BYTES_ADMIN_PIN_FILE",
-                                  "/etc/clockin-device/admin-pin");
+    const std::string inline_admin_pin = Environment("BITS_BYTES_ADMIN_PIN");
+    config.admin_pin_path = Environment("BITS_BYTES_ADMIN_PIN_FILE");
+    if (config.admin_pin_path.empty()) {
+        config.admin_pin_path = "/etc/clockin-device/admin-pin";
+    }
+    config.admin_pin_persistable = inline_admin_pin.empty();
+    config.admin_pin = inline_admin_pin.empty()
+                           ? ReadSecret("BITS_BYTES_ADMIN_PIN",
+                                        "BITS_BYTES_ADMIN_PIN_FILE",
+                                        "/etc/clockin-device/admin-pin")
+                           : inline_admin_pin;
     config.touch_device = Environment("BITS_BYTES_TOUCH_DEVICE");
     if (config.touch_device.empty()) config.touch_device = "/dev/input/event1";
     config.framebuffer_format = Environment("BITS_BYTES_FRAMEBUFFER_FORMAT");

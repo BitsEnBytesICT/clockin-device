@@ -24,6 +24,7 @@ public:
                          double now_seconds,
                          IWorkflowView& view);
     void ReturnToWaiting(double now_seconds, IWorkflowView& view);
+    void RequestHealth(double now_seconds);
 
     const WorkflowSession& Session() const { return session_; }
     WorkflowSession& Session() { return session_; }

@@ -1,10 +1,21 @@
 #include "TestHarness.hpp"
 
 #include "app/Navigation.hpp"
+#include "domain/AttendanceDate.hpp"
 #include "domain/CardPresenceTracker.hpp"
 #include "domain/RfidUid.hpp"
 
 using namespace clockin;
+
+TEST_CASE("attendance dates display only a validated calendar date") {
+    CHECK(FormatAttendanceDate("2026-08-18") == "2026-08-18");
+    CHECK(FormatAttendanceDate("2026-08-18T00:00:00.000Z") == "2026-08-18");
+    CHECK(FormatAttendanceDate("2026-08-18T:00:00.000Z") == "2026-08-18");
+    CHECK(FormatAttendanceDate("2024-02-29 12:30:00") == "2024-02-29");
+    CHECK(FormatAttendanceDate("2026-02-29T00:00:00Z") ==
+          "2026-02-29T00:00:00Z");
+    CHECK(FormatAttendanceDate("onbekende datum") == "onbekende datum");
+}
 
 TEST_CASE("navigation records every page transition") {
     Navigation navigation;

@@ -9,7 +9,6 @@
 
 namespace clockin {
 
-class AttendancePage;
 class ButtonFeedback;
 class Page;
 class SignaturePage;
@@ -20,7 +19,6 @@ public:
 
     bool Process(const std::vector<TouchEvent>& events,
                  Page& active_page,
-                 AttendancePage& attendance_page,
                  SignaturePage& signature_page,
                  ButtonFeedback& feedback,
                  double now_seconds,

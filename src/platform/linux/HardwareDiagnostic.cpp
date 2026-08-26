@@ -1,6 +1,8 @@
 #include "platform/linux/LinuxGpioOutput.hpp"
 #include "platform/linux/LinuxPwm.hpp"
+#include "platform/linux/LinuxPwmBuzzerOutput.hpp"
 #include "platform/linux/LinuxSpiDevice.hpp"
+#include "services/hardware/buzzer/BuzzerSequencer.hpp"
 #include "services/hardware/rfid/Mfrc522.hpp"
 
 #include <atomic>
@@ -15,6 +17,7 @@ namespace {
 
 using clockin::LinuxGpioOutput;
 using clockin::LinuxPwm;
+using clockin::LinuxPwmBuzzerOutput;
 using clockin::LinuxSpiDevice;
 using clockin::Mfrc522;
 using clockin::PulseMfrc522Reset;
@@ -25,25 +28,43 @@ void HandleSignal(int) {
     keep_running.store(false);
 }
 
-bool TestBuzzer() {
-    LinuxPwm pwm;
-    std::string error;
-    if (!pwm.OpenTim16Channel1(error) || !pwm.Configure(500000, 100000, error)) {
-        fprintf(stderr, "BUZZER FAIL: %s\n", error.c_str());
+double Seconds(const std::chrono::steady_clock::time_point& value) {
+    return std::chrono::duration<double>(value.time_since_epoch()).count();
+}
+
+bool PlayCue(clockin::BuzzerSequencer& buzzer,
+             clockin::BuzzerPattern pattern,
+             const char* label,
+             std::string& error) {
+    printf("BUZZER: %s\n", label);
+    if (!buzzer.Start(pattern, Seconds(std::chrono::steady_clock::now()), error)) {
         return false;
     }
-    printf("BUZZER: one 50 ms beep\n");
-    if (!pwm.SetEnabled(true, error)) return false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    if (!pwm.SetEnabled(false, error)) return false;
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    while (buzzer.Active() && keep_running.load()) {
+        if (!buzzer.Update(Seconds(std::chrono::steady_clock::now()), error)) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(180));
+    return true;
+}
 
-    printf("BUZZER: three 50 ms beeps\n");
-    for (int beep = 0; beep < 3; ++beep) {
-        if (!pwm.SetEnabled(true, error)) return false;
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        if (!pwm.SetEnabled(false, error)) return false;
-        if (beep != 2) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+bool TestBuzzer() {
+    LinuxPwm pwm;
+    LinuxPwmBuzzerOutput output(pwm);
+    clockin::BuzzerSequencer buzzer(output);
+    std::string error;
+    if (!PlayCue(buzzer, clockin::BuzzerPattern::CardAccepted,
+                 "subtle card acknowledgement", error) ||
+        !PlayCue(buzzer, clockin::BuzzerPattern::Success,
+                 "rising success cue", error) ||
+        !PlayCue(buzzer, clockin::BuzzerPattern::Warning,
+                 "restrained warning cue", error) ||
+        !PlayCue(buzzer, clockin::BuzzerPattern::Error,
+                 "descending error cue", error)) {
+        fprintf(stderr, "BUZZER FAIL: %s\n", error.c_str());
+        return false;
     }
     printf("BUZZER PASS: PWM is disabled\n");
     return true;

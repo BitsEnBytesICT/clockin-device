@@ -31,6 +31,7 @@ TEST_CASE("clock-in workflow reaches attendance, signature and success") {
     workflow.Update(clockin::PageId::Waiting, 1.0, view);
     CHECK(view.page == clockin::PageId::Processing);
     CHECK(api.jobs.back().rfid_uid == "11F3EF12");
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::CardAccepted) == 1);
 
     clockin::ApiResult scan =
         Result(api.LastId(clockin::ApiJobType::Scan), clockin::ApiJobType::Scan,
@@ -39,7 +40,7 @@ TEST_CASE("clock-in workflow reaches attendance, signature and success") {
     scan.scan.user_name = "Ada Lovelace";
     api.Push(scan);
     workflow.Update(clockin::PageId::Processing, 1.1, view);
-    CHECK(hardware.buzzes == 1);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::Success) == 0);
     CHECK(api.Count(clockin::ApiJobType::Attendance) == 1);
 
     clockin::ApiResult attendance =
@@ -57,7 +58,23 @@ TEST_CASE("clock-in workflow reaches attendance, signature and success") {
                     clockin::ApiJobType::Signature, clockin::ApiOutcome::Ok));
     workflow.Update(clockin::PageId::Processing, 1.4, view);
     CHECK(view.page == clockin::PageId::Success);
-    CHECK(hardware.buzzes == 2);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::Success) == 1);
+}
+
+TEST_CASE("health refresh requests coalesce while a health check is pending") {
+    clockin::test::FakeApiService api;
+    clockin::test::FakeHardwareService hardware;
+    clockin::test::RecordingWorkflowView view;
+    clockin::WorkflowCoordinator workflow(api, hardware);
+    workflow.Start(0.0);
+    CHECK(api.Count(clockin::ApiJobType::Health) == 1);
+    workflow.RequestHealth(0.1);
+    workflow.RequestHealth(0.2);
+    CHECK(api.Count(clockin::ApiJobType::Health) == 1);
+    api.Push(Result(api.LastId(clockin::ApiJobType::Health),
+                    clockin::ApiJobType::Health, clockin::ApiOutcome::Ok));
+    workflow.Update(clockin::PageId::Admin, 0.3, view);
+    CHECK(api.Count(clockin::ApiJobType::Health) == 2);
 }
 
 TEST_CASE("held card cannot create a second clock-out") {
@@ -75,15 +92,36 @@ TEST_CASE("held card cannot create a second clock-out") {
     scan.scan.user_name = "Grace Hopper";
     api.Push(scan);
     workflow.Update(clockin::PageId::Processing, 1.1, view);
-    CHECK(hardware.beeps == 1);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::Success) == 1);
     workflow.ReturnToWaiting(1.2, view);
     hardware.Present("AABBCCDD");
     workflow.Update(clockin::PageId::Waiting, 1.3, view);
     CHECK(api.Count(clockin::ApiJobType::Scan) == 1);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::CardAccepted) == 1);
     workflow.Update(clockin::PageId::Waiting, 3.0, view);
     hardware.Present("AABBCCDD");
     workflow.Update(clockin::PageId::Waiting, 3.1, view);
     CHECK(api.Count(clockin::ApiJobType::Scan) == 2);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::CardAccepted) == 2);
+}
+
+TEST_CASE("administrator RFID feedback sounds once per card presentation") {
+    clockin::test::FakeApiService api;
+    clockin::test::FakeHardwareService hardware;
+    clockin::test::RecordingWorkflowView view;
+    clockin::WorkflowCoordinator workflow(api, hardware);
+    workflow.Start(0.0);
+
+    hardware.Present("A1B2C3D4");
+    workflow.Update(clockin::PageId::Admin, 1.0, view);
+    hardware.Present("A1B2C3D4");
+    workflow.Update(clockin::PageId::Admin, 1.1, view);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::CardAccepted) == 1);
+
+    workflow.Update(clockin::PageId::Admin, 3.0, view);
+    hardware.Present("A1B2C3D4");
+    workflow.Update(clockin::PageId::Admin, 3.1, view);
+    CHECK(hardware.FeedbackCount(clockin::FeedbackCue::CardAccepted) == 2);
 }
 
 TEST_CASE("API rejection, cancellation, timeout and uncertain result show errors") {
@@ -102,6 +140,7 @@ TEST_CASE("API rejection, cancellation, timeout and uncertain result show errors
                         clockin::ApiJobType::Scan, outcome));
         workflow.Update(clockin::PageId::Processing, 1.1, view);
         CHECK(view.page == clockin::PageId::Error);
+        CHECK(hardware.FeedbackCount(clockin::FeedbackCue::Error) == 1);
         if (outcome == clockin::ApiOutcome::Uncertain) CHECK(!view.detail.empty());
     }
 }

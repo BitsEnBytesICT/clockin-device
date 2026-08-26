@@ -4,7 +4,7 @@
 
 `main.cpp` only loads configuration, constructs `Application` and returns its
 exit code. `Application` owns the Linux display/window, ImGui lifetime, API
-worker, hardware worker and `ApplicationController`.
+worker, hardware worker, network worker and `ApplicationController`.
 
 `ApplicationController` is the sole owner of update order and navigation. It
 does not expose a mutable application context to pages. Each page owns only the
@@ -15,29 +15,49 @@ state it renders:
 - `AttendancePage`: employee, dates, warning and scroll position.
 - `SignaturePage`: employee, validation warning and signature pad.
 - `SuccessPage` and `ErrorPage`: result text.
-- `AdminPinPage`: PIN entry state.
-- `AdminPage`: last scanned UID.
+- `AdminPinPage`: login PIN entry state.
+- `AdminPage`: the admin shell and tab selection.
+- `AdminRfidPanel`: last scanned UID and reader feedback.
+- `AdminPinPanel`: the two-step PIN-change workflow.
+- `AdminNetworkPanel`: Wi-Fi list, details, confirmations and status.
+- `OnScreenKeyboard`: temporary Wi-Fi passphrase entry.
 
 Information that must survive a screen transition lives in `WorkflowSession`:
 the pending UID, employee data, action, active request and card-removal guard.
-Pages return `UiControl` actions through `InputRouter`; they never call the API,
-hardware service or another page directly.
+Pages return typed actions through `InputRouter`; they never call the API,
+hardware or network service directly. `ApplicationController` executes those
+actions and feeds immutable snapshots back to the active admin panel.
 
 ## Deterministic frame cycle
 
 Every rendered frame follows one order:
 
-1. Poll Linux touch events and drain queued RFID/API results.
+1. Poll Linux touch events and drain queued RFID/API/network results.
 2. Advance the attendance workflow.
 3. Route touch events to the active page.
 4. Apply navigation and timed success/error transitions.
 5. Update activity-driven backlight state and hardware feedback.
 6. Render the active page and optional performance overlay.
 
-The render thread never blocks on SPI, PWM timing or HTTP. `ApiWorker` and
-`HardwareService` each own one background thread and bounded queues. Service
-interfaces (`IApiService`, `IHardwareService`, `IBuzzerOutput`, `SpiTransport`)
-allow tests to use small deterministic fakes.
+The render thread never blocks on SPI, PWM timing, HTTP, Wi-Fi association or
+DHCP. `ApiWorker`, `HardwareService` and `NetworkService` each own one background
+thread and bounded queues. Service interfaces (`IApiService`,
+`IHardwareService`, `INetworkService`, `IBuzzerOutput`, `SpiTransport`) allow
+tests to use small deterministic fakes.
+
+## Administrator security
+
+Opening the admin shell still requires the configured four-digit PIN. The shell
+locks after 120 seconds without touch activity and wipes partially entered PINs
+and Wi-Fi passwords. A PIN change is entered twice and is atomically written to
+the configured root-only file before the in-memory value changes. An inline
+`BITS_BYTES_ADMIN_PIN` override is deliberately read-only because a file update
+would be shadowed at the next restart.
+
+Wi-Fi passwords are validated, sent over the local Unix datagram control socket,
+then overwritten in page, controller and worker command buffers. They are never
+arguments to a process and never logged. Persistent credentials are managed by
+`wpa_supplicant` in its root-owned mode-`0600` configuration.
 
 ## RFID behavior
 
@@ -56,11 +76,23 @@ card storage are intentionally absent.
 
 ## Buzzer behavior
 
-`BuzzerSequencer` is a platform-independent state machine. A single beep is one
-50 ms pulse. A triple buzz is three 50 ms pulses separated by 50 ms gaps. Linux
-PWM output uses a 500,000 ns period (2 kHz) and 100,000 ns duty cycle (20%). The
-sequence is advanced asynchronously and always disables PWM on completion,
-cancellation, service stop and the systemd `ExecStopPost` safety hook.
+`BuzzerSequencer` is a platform-independent state machine for five semantic
+cues: a very short tap, card acknowledgement, rising success cue, neutral
+warning and descending error cue. Notes remain close to the buzzer's proven
+2 kHz range, use only 10-18% duty cycle and last 15-165 ms in total. Short silent
+gaps separate notes cleanly without continuous PWM reconfiguration.
+
+Sound is deliberately sparse. A new RFID presentation is acknowledged once;
+completed attendance operations receive success feedback; user-facing workflow
+errors receive error feedback. Only important transactional controls such as
+network refresh/connect, attendance confirmation and signature submission use
+the quiet tap. Destructive disconnect/forget actions use the warning. Tabs,
+navigation, PIN digits and keyboard keys remain silent.
+
+Low-priority duplicate taps are coalesced in a bounded queue, while success and
+error feedback supersede waiting low-priority cues. The sequence advances on
+the hardware thread and always disables PWM on completion, cancellation,
+service stop and the systemd `ExecStopPost` safety hook.
 
 ## API safety
 

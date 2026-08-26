@@ -3,7 +3,7 @@ set -euo pipefail
 
 source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build_root="${CLOCKIN_ARM_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/clockin-device/arm}"
-board="${CLOCKIN_BOARD:-${1:-root@192.168.11.51}}"
+board="${CLOCKIN_BOARD:-${1:-root@10.10.1.20}}"
 binary="$build_root/clockin-device"
 diagnostic="$build_root/clockin-hardware-diagnostic"
 unit="$source_root/board/systemd/clockin-device.service"
@@ -33,6 +33,11 @@ ssh "$board" 'set -eu
     ls /sys/class/pwm/pwmchip* >/dev/null
     install -d -o root -g root -m 0700 /etc/clockin-device
     install -d -o root -g root -m 0755 /usr/local/lib/clockin-device/backup'
+
+if ! ssh "$board" 'test -S /run/wpa_supplicant/wlan0 && test "$(wpa_cli -p /run/wpa_supplicant -i wlan0 ping 2>/dev/null)" = PONG'; then
+    echo "Wi-Fi control access is not ready. Run scripts/migrate-network-control.sh first." >&2
+    exit 1
+fi
 
 if [[ -n "${CLOCKIN_API_BASE_URL:-}" ]]; then
     validate_single_line CLOCKIN_API_BASE_URL "$CLOCKIN_API_BASE_URL"

@@ -16,7 +16,7 @@ WorkflowCoordinator::WorkflowCoordinator(IApiService& api, IHardwareService& har
 
 void WorkflowCoordinator::Start(double now_seconds) {
     if (api_.Start()) {
-        api_.SubmitHealth();
+        RequestHealth(now_seconds);
     } else {
         std::fprintf(stderr, "API worker could not start; UI remains available offline\n");
         session_.health_known = true;
@@ -37,8 +37,19 @@ void WorkflowCoordinator::Update(PageId page,
     DrainApi(now_seconds, view);
     DrainRfid(page, now_seconds, view);
     if (now_seconds >= session_.next_health_check && !session_.ApiBusy() &&
-        page == PageId::Waiting) {
-        api_.SubmitHealth();
+        (page == PageId::Waiting || page == PageId::Admin)) {
+        RequestHealth(now_seconds);
+    }
+}
+
+void WorkflowCoordinator::RequestHealth(double now_seconds) {
+    if (session_.ApiBusy()) return;
+    if (session_.health_pending) {
+        session_.health_refresh_requested = true;
+        return;
+    }
+    if (api_.SubmitHealth() != 0) {
+        session_.health_pending = true;
         session_.next_health_check = now_seconds + 15.0;
     }
 }
@@ -74,11 +85,15 @@ void WorkflowCoordinator::HandleApiResult(const ApiResult& result,
                                           double now_seconds,
                                           IWorkflowView& view) {
     if (result.type == ApiJobType::Health) {
+        session_.health_pending = false;
+        const bool refresh_requested = session_.health_refresh_requested;
+        session_.health_refresh_requested = false;
         session_.health_known = true;
         session_.health_online = result.IsOk();
         session_.next_health_check = now_seconds + (result.IsOk() ? 60.0 : 15.0);
         std::printf("API %s: %s%s\n", result.IsOk() ? "reachable" : "unavailable",
                     api_.BaseUrl().c_str(), api_.HasApiKey() ? "" : " (API key missing)");
+        if (refresh_requested) RequestHealth(now_seconds);
         return;
     }
     if (!IsCurrentApiResult(session_.request_id, result)) return;
@@ -104,11 +119,10 @@ void WorkflowCoordinator::HandleApiResult(const ApiResult& result,
         session_.action = result.scan.action;
         std::printf("%s - %s\n", session_.action.c_str(), session_.user_name.c_str());
         if (session_.action == "clock_out") {
-            hardware_.Beep();
+            hardware_.PlayFeedback(FeedbackCue::Success);
             RequireCardRemoval(session_.pending_rfid_uid);
             view.ShowSuccess(session_.user_name, session_.action, now_seconds);
         } else {
-            hardware_.Buzz();
             Submit(WorkflowRequest::Attendance,
                    api_.SubmitAttendance(session_.pending_rfid_uid),
                    "Aanwezigheid laden...", now_seconds, view);
@@ -116,7 +130,7 @@ void WorkflowCoordinator::HandleApiResult(const ApiResult& result,
     } else if (completed == WorkflowRequest::Attendance) {
         view.ShowAttendance(session_.user_name, result.attendance_dates, {}, now_seconds);
     } else if (completed == WorkflowRequest::Signature) {
-        hardware_.Buzz();
+        hardware_.PlayFeedback(FeedbackCue::Success);
         RequireCardRemoval(session_.pending_rfid_uid);
         view.ShowSuccess(session_.user_name, session_.action, now_seconds);
     }
@@ -138,6 +152,9 @@ void WorkflowCoordinator::DrainRfid(PageId page,
         if (uid.empty() || uid.size() > 64) continue;
         const bool new_presentation = card_presence_.Observe(uid, now_seconds);
         if (page == PageId::Admin) {
+            if (new_presentation) {
+                hardware_.PlayFeedback(FeedbackCue::CardAccepted);
+            }
             view.ShowAdminCard(uid);
             RequireCardRemoval(uid);
             continue;
@@ -151,8 +168,10 @@ void WorkflowCoordinator::DrainRfid(PageId page,
         session_.pending_rfid_uid = uid;
         RequireCardRemoval(uid);
         std::printf("RFID card: %s\n", uid.c_str());
-        Submit(WorkflowRequest::Scan, api_.SubmitScan(uid), "Kaart verwerken...",
-               now_seconds, view);
+        if (Submit(WorkflowRequest::Scan, api_.SubmitScan(uid), "Kaart verwerken...",
+                   now_seconds, view)) {
+            hardware_.PlayFeedback(FeedbackCue::CardAccepted);
+        }
     }
     if (card_presence_.Update(now_seconds) && session_.require_card_removal) {
         session_.require_card_removal = false;
@@ -188,6 +207,7 @@ void WorkflowCoordinator::Error(const std::string& message,
     if (uncertain && card_presence_.IsPresent()) {
         RequireCardRemoval(session_.pending_rfid_uid);
     }
+    hardware_.PlayFeedback(FeedbackCue::Error);
     view.ShowError(resolved, detail, now_seconds);
 }
 

@@ -22,11 +22,14 @@ set(CLOCKIN_DOMAIN_SOURCES
     src/app/Navigation.cpp
     src/app/WorkflowCoordinator.cpp
     src/app/WorkflowSession.cpp
+    src/domain/AttendanceDate.cpp
     src/domain/CardPresenceTracker.cpp
     src/domain/RfidUid.cpp
     src/services/api/TinyJson.cpp
     src/services/hardware/buzzer/BuzzerSequencer.cpp
     src/services/hardware/rfid/Mfrc522.cpp
+    src/services/network/NetworkParsing.cpp
+    src/services/network/NetworkTypes.cpp
     src/ui/SignaturePad.cpp
 )
 
@@ -54,10 +57,16 @@ if(CLOCKIN_BUILD_APP)
         src/app/AppConfiguration.cpp
         src/app/Application.cpp
         src/app/ApplicationController.cpp
+        src/app/ApplicationControllerAdmin.cpp
         src/app/InputRouter.cpp
         ${CLOCKIN_DOMAIN_SOURCES}
         src/pages/AdminPage.cpp
         src/pages/AdminPinPage.cpp
+        src/pages/admin/AdminNetworkPanel.cpp
+        src/pages/admin/AdminNetworkPanelDrawing.cpp
+        src/pages/admin/AdminPinPanel.cpp
+        src/pages/admin/AdminRfidPanel.cpp
+        src/pages/admin/OnScreenKeyboard.cpp
         src/pages/AttendancePage.cpp
         src/pages/ErrorPage.cpp
         src/pages/ProcessingPage.cpp
@@ -68,6 +77,7 @@ if(CLOCKIN_BUILD_APP)
         src/platform/linux/LinuxDeviceDiscovery.cpp
         src/platform/linux/LinuxGpioOutput.cpp
         src/platform/linux/LinuxPwm.cpp
+        src/platform/linux/LinuxPwmBuzzerOutput.cpp
         src/platform/linux/LinuxSpiDevice.cpp
         src/services/api/ApiClient.cpp
         src/services/api/ApiWorker.cpp
@@ -75,11 +85,17 @@ if(CLOCKIN_BUILD_APP)
         src/services/display/PerformanceMetrics.cpp
         src/services/hardware/HardwareService.cpp
         src/services/input/TouchInput.cpp
+        src/services/config/AdminPinStore.cpp
+        src/services/network/NetworkConnection.cpp
+        src/services/network/NetworkService.cpp
+        src/services/network/WpaControlSocket.cpp
         src/ui/assets/UiAssets.cpp
         src/ui/components/ButtonFeedback.cpp
         src/ui/components/PageDrawing.cpp
         src/ui/components/PageTransition.cpp
+        src/ui/components/PinKeypad.cpp
         src/ui/components/StatusAnimation.cpp
+        src/ui/components/VectorIcons.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
@@ -118,7 +134,9 @@ if(CLOCKIN_BUILD_DIAGNOSTIC)
         src/platform/linux/LinuxDeviceDiscovery.cpp
         src/platform/linux/LinuxGpioOutput.cpp
         src/platform/linux/LinuxPwm.cpp
+        src/platform/linux/LinuxPwmBuzzerOutput.cpp
         src/platform/linux/LinuxSpiDevice.cpp
+        src/services/hardware/buzzer/BuzzerSequencer.cpp
         src/services/hardware/rfid/Mfrc522.cpp
     )
     target_include_directories(clockin-hardware-diagnostic PRIVATE "${CLOCKIN_SOURCE_DIR}")
@@ -137,6 +155,7 @@ if(CLOCKIN_BUILD_TESTS)
         tests/unit/ConfigurationTests.cpp
         tests/unit/DomainTests.cpp
         tests/unit/JsonTests.cpp
+        tests/unit/NetworkTests.cpp
         tests/unit/PageTests.cpp
         tests/unit/RfidTests.cpp
         tests/unit/SignatureTests.cpp
@@ -144,9 +163,15 @@ if(CLOCKIN_BUILD_TESTS)
         tests/unit/UiAnimationTests.cpp
         tests/unit/WorkflowTests.cpp
         src/app/AppConfiguration.cpp
+        src/services/config/AdminPinStore.cpp
         ${CLOCKIN_DOMAIN_SOURCES}
         src/pages/AdminPage.cpp
         src/pages/AdminPinPage.cpp
+        src/pages/admin/AdminNetworkPanel.cpp
+        src/pages/admin/AdminNetworkPanelDrawing.cpp
+        src/pages/admin/AdminPinPanel.cpp
+        src/pages/admin/AdminRfidPanel.cpp
+        src/pages/admin/OnScreenKeyboard.cpp
         src/pages/AttendancePage.cpp
         src/pages/ErrorPage.cpp
         src/pages/ProcessingPage.cpp
@@ -157,7 +182,9 @@ if(CLOCKIN_BUILD_TESTS)
         src/ui/components/ButtonFeedback.cpp
         src/ui/components/PageDrawing.cpp
         src/ui/components/PageTransition.cpp
+        src/ui/components/PinKeypad.cpp
         src/ui/components/StatusAnimation.cpp
+        src/ui/components/VectorIcons.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp

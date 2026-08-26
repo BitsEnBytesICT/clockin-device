@@ -1,5 +1,6 @@
 #include "pages/AttendancePage.hpp"
 
+#include "domain/AttendanceDate.hpp"
 #include "ui/Theme.hpp"
 #include "ui/components/ActionButtonLayout.hpp"
 #include "ui/components/PageDrawing.hpp"
@@ -24,13 +25,20 @@ void AttendancePage::SetData(std::string user_name,
                              std::vector<std::string> dates,
                              std::string warning) {
     user_name_ = std::move(user_name);
+    for (std::string& date : dates) date = FormatAttendanceDate(date);
     dates_ = std::move(dates);
     warning_ = std::move(warning);
     scroll_offset_ = 0.0f;
     dragging_ = false;
 }
 
-void AttendancePage::Drag(float delta_y) {
+bool AttendancePage::BeginScroll(const ImVec2& point) {
+    dragging_ = PointInRectangle(point, 40, 90, 560, 330);
+    return dragging_;
+}
+
+void AttendancePage::ScrollBy(float delta_y) {
+    if (!dragging_) return;
     const float maximum_scroll =
         std::max(0.0f, 24.0f * static_cast<float>(dates_.size()) - 280.0f);
     scroll_offset_ = std::max(-maximum_scroll,

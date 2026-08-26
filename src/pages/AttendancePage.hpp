@@ -15,10 +15,9 @@ public:
     void SetData(std::string user_name,
                  std::vector<std::string> dates,
                  std::string warning);
-    void BeginDrag() { dragging_ = true; }
-    void Drag(float delta_y);
-    void EndDrag() { dragging_ = false; }
-    bool Dragging() const { return dragging_; }
+    bool BeginScroll(const ImVec2& point) override;
+    void ScrollBy(float delta_y) override;
+    void EndScroll() override { dragging_ = false; }
     void Reset();
 
 private:
