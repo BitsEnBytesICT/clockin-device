@@ -22,11 +22,17 @@ TEST_CASE("page hit regions expose only their own actions") {
     ErrorPage error;
 
     CHECK(waiting.HitTest({700, 40}) == UiControl::Admin);
-    CHECK(attendance.HitTest({700, 40}) == UiControl::AttendanceBack);
-    CHECK(attendance.HitTest({700, 430}) == UiControl::AttendanceConfirm);
-    CHECK(signature.HitTest({700, 40}) == UiControl::SignatureClear);
-    CHECK(signature.HitTest({700, 235}) == UiControl::SignatureCancel);
-    CHECK(signature.HitTest({700, 430}) == UiControl::SignatureSubmit);
+    CHECK(attendance.HitTest({700, 204}) == UiControl::AttendanceBack);
+    CHECK(attendance.HitTest({700, 276}) == UiControl::AttendanceConfirm);
+    CHECK(signature.HitTest({700, 168}) == UiControl::SignatureClear);
+    CHECK(signature.HitTest({700, 240}) == UiControl::SignatureCancel);
+    CHECK(signature.HitTest({700, 312}) == UiControl::SignatureSubmit);
+    CHECK(attendance.HitTest({700, 40}) == UiControl::None);
+    CHECK(attendance.HitTest({700, 240}) == UiControl::None);
+    CHECK(signature.HitTest({700, 40}) == UiControl::None);
+    CHECK(signature.HitTest({700, 204}) == UiControl::None);
+    CHECK(signature.HitTest({700, 276}) == UiControl::None);
+    CHECK(signature.HitTest({700, 430}) == UiControl::None);
     CHECK(admin.HitTest({700, 40}) == UiControl::AdminBack);
     CHECK(pin.HitTest({700, 40}) == UiControl::AdminBack);
     CHECK(pin.HitTest({265, 230}) == UiControl::Key1);

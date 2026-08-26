@@ -11,14 +11,18 @@ class SuccessPage final : public Page {
 public:
     PageId Id() const override { return PageId::Success; }
     void Render(ImDrawList& draw, PageDrawing& drawing) const override;
-    void SetResult(std::string user_name, std::string action) {
+    void SetResult(std::string user_name,
+                   std::string action,
+                   double animation_started_at) {
         user_name_ = std::move(user_name);
         action_ = std::move(action);
+        animation_started_at_ = animation_started_at;
     }
 
 private:
     std::string user_name_;
     std::string action_;
+    double animation_started_at_ = 0.0;
 };
 
 }  // namespace clockin

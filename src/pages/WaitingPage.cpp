@@ -24,7 +24,6 @@ void WaitingPage::Render(ImDrawList& draw, PageDrawing& drawing) const {
                                               static_cast<int>((1.0f - phase) * 220.0f)),
                        32, 4.0f);
     }
-    draw.AddCircleFilled(center, 9.0f, theme::Orange, 20);
     drawing.CenteredText(&draw, drawing.SemiBold(), 32.0f, 304.0f, theme::Text,
                          "Scan uw RFID-kaart");
     drawing.CenteredText(&draw, drawing.Regular(), 20.0f, 350.0f, theme::MutedText,

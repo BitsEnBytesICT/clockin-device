@@ -1,6 +1,7 @@
 #include "pages/SignaturePage.hpp"
 
 #include "ui/Theme.hpp"
+#include "ui/components/ActionButtonLayout.hpp"
 #include "ui/components/PageDrawing.hpp"
 
 #include <cstdio>
@@ -9,9 +10,15 @@
 namespace clockin {
 
 UiControl SignaturePage::HitTest(const ImVec2& point) const {
-    if (PointInRectangle(point, 650, 10, 140, 60)) return UiControl::SignatureClear;
-    if (PointInRectangle(point, 650, 205, 140, 60)) return UiControl::SignatureCancel;
-    if (PointInRectangle(point, 650, 400, 140, 60)) return UiControl::SignatureSubmit;
+    if (CenteredRightActionButton(0, 3).Contains(point)) {
+        return UiControl::SignatureClear;
+    }
+    if (CenteredRightActionButton(1, 3).Contains(point)) {
+        return UiControl::SignatureCancel;
+    }
+    if (CenteredRightActionButton(2, 3).Contains(point)) {
+        return UiControl::SignatureSubmit;
+    }
     return UiControl::None;
 }
 
@@ -78,13 +85,16 @@ void SignaturePage::Render(ImDrawList& draw, PageDrawing& drawing) const {
                          static_cast<int>(signature_.CurrentStroke().size()),
                          theme::Text, false, 3.0f);
     }
-    drawing.ActionButton(&draw, {650, 10}, {790, 70},
+    const ActionButtonBounds clear_button = CenteredRightActionButton(0, 3);
+    const ActionButtonBounds cancel_button = CenteredRightActionButton(1, 3);
+    const ActionButtonBounds submit_button = CenteredRightActionButton(2, 3);
+    drawing.ActionButton(&draw, clear_button.minimum, clear_button.maximum,
                          drawing.IconsAvailable() ? u8"\uE001Wissen" : "Wissen",
                          UiControl::SignatureClear, ButtonVariant::Quiet);
-    drawing.ActionButton(&draw, {650, 205}, {790, 265},
+    drawing.ActionButton(&draw, cancel_button.minimum, cancel_button.maximum,
                          drawing.IconsAvailable() ? u8"\uE002Annuleren" : "Annuleren",
                          UiControl::SignatureCancel, ButtonVariant::Secondary);
-    drawing.ActionButton(&draw, {650, 400}, {790, 460},
+    drawing.ActionButton(&draw, submit_button.minimum, submit_button.maximum,
                          drawing.IconsAvailable() ? u8"\uE003Versturen" : "Versturen",
                          UiControl::SignatureSubmit, ButtonVariant::Primary);
 }

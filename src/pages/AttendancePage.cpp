@@ -1,6 +1,7 @@
 #include "pages/AttendancePage.hpp"
 
 #include "ui/Theme.hpp"
+#include "ui/components/ActionButtonLayout.hpp"
 #include "ui/components/PageDrawing.hpp"
 
 #include <algorithm>
@@ -10,8 +11,12 @@
 namespace clockin {
 
 UiControl AttendancePage::HitTest(const ImVec2& point) const {
-    if (PointInRectangle(point, 650, 10, 140, 60)) return UiControl::AttendanceBack;
-    if (PointInRectangle(point, 650, 400, 140, 60)) return UiControl::AttendanceConfirm;
+    if (CenteredRightActionButton(0, 2).Contains(point)) {
+        return UiControl::AttendanceBack;
+    }
+    if (CenteredRightActionButton(1, 2).Contains(point)) {
+        return UiControl::AttendanceConfirm;
+    }
     return UiControl::None;
 }
 
@@ -95,10 +100,12 @@ void AttendancePage::Render(ImDrawList& draw, PageDrawing& drawing) const {
                                theme::Blue, 4.0f);
         }
     }
-    drawing.ActionButton(&draw, {650, 10}, {790, 70},
+    const ActionButtonBounds back_button = CenteredRightActionButton(0, 2);
+    const ActionButtonBounds confirm_button = CenteredRightActionButton(1, 2);
+    drawing.ActionButton(&draw, back_button.minimum, back_button.maximum,
                          drawing.IconsAvailable() ? u8"\uE004Terug" : "Terug",
                          UiControl::AttendanceBack, ButtonVariant::Secondary);
-    drawing.ActionButton(&draw, {650, 400}, {790, 460},
+    drawing.ActionButton(&draw, confirm_button.minimum, confirm_button.maximum,
                          drawing.IconsAvailable() ? u8"\uE005Bevestig" : "Bevestig",
                          UiControl::AttendanceConfirm, ButtonVariant::Primary);
 }

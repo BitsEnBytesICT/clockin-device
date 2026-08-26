@@ -4,7 +4,6 @@
 
 namespace clockin::theme {
 
-inline constexpr ImU32 Orange = IM_COL32(242, 136, 15, 255);
 inline constexpr ImU32 Blue = IM_COL32(49, 113, 153, 255);
 inline constexpr ImU32 BlueDark = IM_COL32(39, 91, 124, 255);
 inline constexpr ImU32 LightBlue = IM_COL32(146, 213, 255, 255);

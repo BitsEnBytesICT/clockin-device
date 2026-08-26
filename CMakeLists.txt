@@ -78,6 +78,8 @@ if(CLOCKIN_BUILD_APP)
         src/ui/assets/UiAssets.cpp
         src/ui/components/ButtonFeedback.cpp
         src/ui/components/PageDrawing.cpp
+        src/ui/components/PageTransition.cpp
+        src/ui/components/StatusAnimation.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
@@ -139,6 +141,7 @@ if(CLOCKIN_BUILD_TESTS)
         tests/unit/RfidTests.cpp
         tests/unit/SignatureTests.cpp
         tests/unit/TouchTests.cpp
+        tests/unit/UiAnimationTests.cpp
         tests/unit/WorkflowTests.cpp
         src/app/AppConfiguration.cpp
         ${CLOCKIN_DOMAIN_SOURCES}
@@ -153,6 +156,8 @@ if(CLOCKIN_BUILD_TESTS)
         src/services/input/TouchInput.cpp
         src/ui/components/ButtonFeedback.cpp
         src/ui/components/PageDrawing.cpp
+        src/ui/components/PageTransition.cpp
+        src/ui/components/StatusAnimation.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp

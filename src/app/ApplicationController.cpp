@@ -2,6 +2,7 @@
 
 #include "services/api/IApiService.hpp"
 #include "services/hardware/IHardwareService.hpp"
+#include "ui/components/PageTransition.hpp"
 
 #include <cstdio>
 #include <utility>
@@ -57,7 +58,11 @@ void ApplicationController::Update(double delta, double now_seconds) {
 void ApplicationController::Render(double now_seconds) {
     drawing_.BeginFrame(&button_feedback_, now_seconds);
     ImDrawList* draw = ImGui::GetBackgroundDrawList();
+    const int first_page_vertex = draw->VtxBuffer.Size;
     ActivePage().Render(*draw, drawing_);
+    ApplyPageTransition(
+        *draw, first_page_vertex,
+        EvaluatePageTransition(now_seconds - navigation_.EnteredAt()));
     RenderPerformanceOverlay();
 }
 
@@ -95,14 +100,14 @@ void ApplicationController::ShowAttendance(const std::string& user_name,
 void ApplicationController::ShowSuccess(const std::string& user_name,
                                         const std::string& action,
                                         double now_seconds) {
-    success_page_.SetResult(user_name, action);
+    success_page_.SetResult(user_name, action, now_seconds);
     ChangePage(PageId::Success, now_seconds);
 }
 
 void ApplicationController::ShowError(const std::string& message,
                                       const std::string& detail,
                                       double now_seconds) {
-    error_page_.SetError(message, detail);
+    error_page_.SetError(message, detail, now_seconds);
     ChangePage(PageId::Error, now_seconds);
 }
 

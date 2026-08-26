@@ -15,6 +15,7 @@ public:
     ImFont* Regular() const;
     ImFont* SemiBold() const;
     bool IconsAvailable() const { return icons_available_; }
+    double NowSeconds() const { return now_seconds_; }
 
     void Surface(ImDrawList* draw,
                  const ImVec2& minimum,
