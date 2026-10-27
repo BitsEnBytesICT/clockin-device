@@ -98,6 +98,12 @@ board's default target. It orders itself after and requests
 `/run/user/1000/wayland-0`. This replaces the old fixed 20-second startup delay
 and the obsolete dependency on `m4-autostart.service`.
 
+The project installs a small drop-in for
+`weston-graphical-session.service`. It selects `tty7` in Weston's own
+pre-start phase, before the Weston logind session and DRM compositor are
+created. This prevents the `tty1` console from obscuring the kiosk without
+deactivating a running DRM compositor.
+
 The application runs as root because SPI, GPIO, PWM, input and backlight access
 are board-level responsibilities. `Restart=always`, a five-second delay and an
 unlimited start interval keep the kiosk alive after an unexpected clean exit,

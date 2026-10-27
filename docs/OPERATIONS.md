@@ -61,7 +61,19 @@ is the authoritative log; `/root/imgui.log` is no longer used.
 ```bash
 ssh root@10.10.1.20 'systemctl is-enabled clockin-device.service; systemctl show clockin-device.service -p ActiveState -p SubState -p Restart -p MainPID -p NRestarts'
 ssh root@10.10.1.20 'journalctl -u clockin-device.service -b --no-pager -n 100'
+ssh root@10.10.1.20 'cat /sys/class/tty/tty0/active'
 ```
+
+The final command should report `tty7`. If a stale console is ever visible,
+restart Weston and then the kiosk so Weston's pre-start terminal selection is
+applied before its compositor starts:
+
+```bash
+ssh root@10.10.1.20 'systemctl restart weston-graphical-session.service && systemctl restart clockin-device.service'
+```
+
+Do not run `chvt 7` after Weston is already running: that can deactivate its
+DRM/input seat and leave the panel black.
 
 To prove automatic recovery without rebooting, record `MainPID`, kill only the
 managed process, wait at least five seconds, and confirm that `MainPID` changed

@@ -107,7 +107,9 @@ background worker so rendering and RFID remain responsive. See
 Deployment enables `clockin-device.service` in the board's default
 `multi-user.target`. The service requests `weston-graphical-session.service`,
 waits up to 60 seconds for `/run/user/1000/wayland-0`, and then launches the
-fullscreen application. It uses `Restart=always` with a five-second delay and
+fullscreen application. A Weston service drop-in selects virtual terminal
+`tty7` before Weston's graphical session starts, so the compositor keeps its
+DRM and input seat. The kiosk uses `Restart=always` with a five-second delay and
 has no systemd restart-rate cutoff, so both crashes and clean unexpected exits
 recover automatically. A deliberate `systemctl stop` still leaves it stopped.
 
