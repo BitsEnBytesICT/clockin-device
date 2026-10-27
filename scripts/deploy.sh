@@ -9,8 +9,9 @@ diagnostic="$build_root/clockin-hardware-diagnostic"
 unit="$source_root/board/systemd/clockin-device.service"
 cleanup="$source_root/board/systemd/disable-buzzer.sh"
 weston_override="$source_root/board/systemd/weston-graphical-session.service.d/clockin-session-activation.conf"
+demo_launcher="$source_root/board/weston/demo-launcher.conf"
 
-for required in "$binary" "$diagnostic" "$unit" "$cleanup" "$weston_override"; do
+for required in "$binary" "$diagnostic" "$unit" "$cleanup" "$weston_override" "$demo_launcher"; do
     [[ -f "$required" ]] || { echo "Missing deployment input: $required" >&2; exit 1; }
 done
 
@@ -74,6 +75,7 @@ scp "$diagnostic" "$board:/tmp/clockin-hardware-diagnostic.new"
 scp "$unit" "$board:/tmp/clockin-device.service.new"
 scp "$cleanup" "$board:/tmp/disable-buzzer.sh.new"
 scp "$weston_override" "$board:/tmp/clockin-session-activation.conf.new"
+scp "$demo_launcher" "$board:/tmp/clockin-demo-launcher.conf.new"
 
 ssh "$board" 'set -eu
     if test -e /usr/local/bin/clockin-device; then
@@ -85,6 +87,9 @@ ssh "$board" 'set -eu
     if test -e /etc/systemd/system/weston-graphical-session.service.d/clockin-session-activation.conf; then
         cp -p /etc/systemd/system/weston-graphical-session.service.d/clockin-session-activation.conf /usr/local/lib/clockin-device/backup/clockin-session-activation.conf.previous
     fi
+    if test -e /etc/default/demo-launcher; then
+        cp -p /etc/default/demo-launcher /usr/local/lib/clockin-device/backup/demo-launcher.conf.previous
+    fi
     systemctl stop clockin-device.service 2>/dev/null || true
     install -o root -g root -m 0755 /tmp/clockin-device.new /usr/local/bin/clockin-device
     install -o root -g root -m 0755 /tmp/clockin-hardware-diagnostic.new /usr/local/bin/clockin-hardware-diagnostic
@@ -92,6 +97,8 @@ ssh "$board" 'set -eu
     install -o root -g root -m 0644 /tmp/clockin-device.service.new /etc/systemd/system/clockin-device.service
     install -d -o root -g root -m 0755 /etc/systemd/system/weston-graphical-session.service.d
     install -o root -g root -m 0644 /tmp/clockin-session-activation.conf.new /etc/systemd/system/weston-graphical-session.service.d/clockin-session-activation.conf
+    install -d -o root -g root -m 0755 /etc/default
+    install -o root -g root -m 0644 /tmp/clockin-demo-launcher.conf.new /etc/default/demo-launcher
     rm -f /usr/local/lib/clockin-device/activate-weston-session.sh
     chown root:root /etc/clockin-device/environment /etc/clockin-device/rfid-api-key /etc/clockin-device/admin-pin
     chmod 0600 /etc/clockin-device/environment /etc/clockin-device/rfid-api-key /etc/clockin-device/admin-pin
@@ -103,7 +110,7 @@ ssh "$board" 'set -eu
     systemctl is-enabled --quiet clockin-device.service
     systemctl is-active --quiet clockin-device.service
     test "$(systemctl show clockin-device.service -p Restart --value)" = always
-    rm -f /tmp/clockin-device.new /tmp/clockin-hardware-diagnostic.new /tmp/clockin-device.service.new /tmp/disable-buzzer.sh.new /tmp/clockin-session-activation.conf.new
+    rm -f /tmp/clockin-device.new /tmp/clockin-hardware-diagnostic.new /tmp/clockin-device.service.new /tmp/disable-buzzer.sh.new /tmp/clockin-session-activation.conf.new /tmp/clockin-demo-launcher.conf.new
     sync
     systemctl show clockin-device.service -p ActiveState -p SubState -p MainPID -p NRestarts -p Result
     journalctl -u clockin-device.service --since "-2 min" --no-pager -n 40'

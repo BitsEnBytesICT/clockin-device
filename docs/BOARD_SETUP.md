@@ -84,6 +84,7 @@ validation fails. Its temporary backup is deleted after success.
 /usr/local/bin/clockin-hardware-diagnostic
 /usr/local/lib/clockin-device/disable-buzzer.sh
 /etc/systemd/system/clockin-device.service
+/etc/default/demo-launcher
 ```
 
 `imgui-app.service` and `m4-autostart.service` are disabled once the new service
@@ -103,6 +104,11 @@ The project installs a small drop-in for
 pre-start phase, before the Weston logind session and DRM compositor are
 created. This prevents the `tty1` console from obscuring the kiosk without
 deactivating a running DRM compositor.
+
+The deployment also writes `/etc/default/demo-launcher` with a harmless
+`/bin/true` command. This uses the OpenSTLinux demo launcher's own supported
+configuration hook to suppress the vendor home/demo application, ensuring that
+it cannot cover the clock-in UI after boot.
 
 The application runs as root because SPI, GPIO, PWM, input and backlight access
 are board-level responsibilities. `Restart=always`, a five-second delay and an

@@ -75,6 +75,17 @@ ssh root@10.10.1.20 'systemctl restart weston-graphical-session.service && syste
 Do not run `chvt 7` after Weston is already running: that can deactivate its
 DRM/input seat and leave the panel black.
 
+If the ST demo/home screen appears instead of the kiosk, confirm the deployment
+installed the override and restart Weston followed by the kiosk:
+
+```bash
+ssh root@10.10.1.20 'cat /etc/default/demo-launcher; systemctl restart weston-graphical-session.service && systemctl restart clockin-device.service'
+```
+
+The file must set `DEFAULT_DEMO_APPLICATION=/bin/true`. Do not remove it on a
+kiosk device; it prevents `/usr/local/demo/demo_launcher.py` from covering the
+ImGui window.
+
 To prove automatic recovery without rebooting, record `MainPID`, kill only the
 managed process, wait at least five seconds, and confirm that `MainPID` changed
 and `NRestarts` increased:

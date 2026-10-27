@@ -33,6 +33,23 @@ docs/                    Architecture, board setup, operations and test evidence
 Generated builds never belong in this tree. WSL writes them to
 `~/.cache/clockin-device/host` and `~/.cache/clockin-device/arm`.
 
+## Complete setup documentation
+
+Start with [docs/DEVICE_FROM_SCRATCH.md](docs/DEVICE_FROM_SCRATCH.md) for a
+new workstation or DK2. It covers A7 boot ownership, wiring, SDK installation,
+build, safe deployment, kiosk startup, sensor validation and recovery.
+
+Documentation is split by responsibility:
+
+- [src/README.md](src/README.md): ImGui frontend, workflow and Linux runtime.
+- [board/README.md](board/README.md): pins, device tree, boot and kiosk units.
+- [scripts/README.md](scripts/README.md): build, deploy and recovery scripts.
+- [docs/BACKEND_INTEGRATION.md](docs/BACKEND_INTEGRATION.md): API contract,
+  backend ownership, key permissions and offline diagnosis.
+
+None of these documents contain API keys, administrator PINs, Wi-Fi passwords,
+database credentials, compiled binaries or SDK files.
+
 ## Host prerequisites
 
 On Windows, install WSL 2 with Ubuntu 24.04. Inside Ubuntu, install the normal
