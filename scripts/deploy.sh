@@ -46,6 +46,8 @@ if [[ -n "${CLOCKIN_API_BASE_URL:-}" ]]; then
     printf 'BITS_BYTES_API_BASE_URL=%s\nBITS_BYTES_API_KEY_FILE=/etc/clockin-device/rfid-api-key\nBITS_BYTES_ADMIN_PIN_FILE=/etc/clockin-device/admin-pin\nBITS_BYTES_TOUCH_DEVICE=/dev/input/event1\nBITS_BYTES_FRAMEBUFFER_FORMAT=auto\n' \
         "$CLOCKIN_API_BASE_URL" | ssh "$board" \
         'umask 077; cat > /etc/clockin-device/environment.new; chown root:root /etc/clockin-device/environment.new; chmod 0600 /etc/clockin-device/environment.new; mv /etc/clockin-device/environment.new /etc/clockin-device/environment'
+    # An explicitly deployed URL replaces any address saved on the admin screen.
+    ssh "$board" 'rm -f /etc/clockin-device/api-base-url'
 elif ! ssh "$board" 'test -s /etc/clockin-device/environment'; then
     echo "Set CLOCKIN_API_BASE_URL for the first deployment." >&2
     exit 1

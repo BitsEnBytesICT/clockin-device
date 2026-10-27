@@ -33,7 +33,8 @@ public:
         return true;
     }
     bool HasApiKey() const override { return has_api_key; }
-    const std::string& BaseUrl() const override { return base_url; }
+    std::string BaseUrl() const override { return base_url; }
+    void SetBaseUrl(const std::string& value) override { base_url = value; }
 
     std::uint64_t LastId(ApiJobType type) const {
         for (auto iterator = jobs.rbegin(); iterator != jobs.rend(); ++iterator) {

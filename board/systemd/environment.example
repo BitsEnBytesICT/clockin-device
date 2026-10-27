@@ -4,3 +4,6 @@ BITS_BYTES_API_KEY_FILE=/etc/clockin-device/rfid-api-key
 BITS_BYTES_ADMIN_PIN_FILE=/etc/clockin-device/admin-pin
 BITS_BYTES_TOUCH_DEVICE=/dev/input/event1
 BITS_BYTES_FRAMEBUFFER_FORMAT=auto
+# Optional: where the admin screen saves a changed API address. When this
+# file exists it overrides BITS_BYTES_API_BASE_URL above.
+# BITS_BYTES_API_BASE_URL_FILE=/etc/clockin-device/api-base-url

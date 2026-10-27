@@ -19,7 +19,10 @@ public:
                                           const std::string& signature) = 0;
     virtual bool TryPop(ApiResult& result) = 0;
     virtual bool HasApiKey() const = 0;
-    virtual const std::string& BaseUrl() const = 0;
+    virtual std::string BaseUrl() const = 0;
+    // Applies to jobs started after the call; a request already in flight
+    // finishes against the previous address.
+    virtual void SetBaseUrl(const std::string& base_url) = 0;
 };
 
 }  // namespace clockin

@@ -13,7 +13,7 @@ namespace clockin {
 namespace {
 
 constexpr float kListTop = 263.0f;
-constexpr float kListBottom = 444.0f;
+constexpr float kListBottom = 479.0f;
 constexpr float kRowHeight = 58.0f;
 
 ImU32 StateColor(bool known, bool online) {
@@ -43,13 +43,13 @@ void DrawStatusValue(ImDrawList& draw,
 void AdminNetworkPanel::Render(ImDrawList& draw, PageDrawing& drawing) const {
     if (mode_ == Mode::Password) {
         const int first_vertex = draw.VtxBuffer.Size;
-        keyboard_.Render(draw, drawing, selected_ssid_);
+        keyboard_.Render(draw, drawing);
         ApplyPageTransition(
             draw, first_vertex,
             EvaluatePageTransition(drawing.NowSeconds() - mode_changed_at_));
         return;
     }
-    drawing.Surface(&draw, {48, 147}, {752, 452}, 14.0f, true);
+    drawing.Surface(&draw, {48, 112}, {752, 487}, 14.0f, true);
     const int first_vertex = draw.VtxBuffer.Size;
     if (mode_ == Mode::List) RenderList(draw, drawing);
     else RenderDetails(draw, drawing);
@@ -77,8 +77,8 @@ void AdminNetworkPanel::RenderList(ImDrawList& draw, PageDrawing& drawing) const
     const bool scanning = snapshot_.state == NetworkState::Scanning;
     const ImVec2 refresh_center{711.5f, 180.5f};
     if (scanning) {
-        const float pulse = 0.5f + 0.5f * std::sin(
-            static_cast<float>(drawing.NowSeconds()) * 5.0f);
+        const float pulse = 0.5f + 0.5f * static_cast<float>(std::sin(
+            std::fmod(drawing.NowSeconds() * 5.0, 6.283185307179586)));
         draw.AddCircle(refresh_center, 31.0f + pulse * 3.0f,
                        PageDrawing::WithAlpha(theme::Blue, 55), 32, 2.0f);
     }
@@ -204,7 +204,8 @@ void AdminNetworkPanel::RenderDetails(ImDrawList& draw, PageDrawing& drawing) co
 
 void AdminNetworkPanel::RenderConfirmation(ImDrawList& draw,
                                            PageDrawing& drawing) const {
-    draw.AddRectFilled({0, 0}, {800, 480}, IM_COL32(22, 35, 45, 145));
+    // Extends below the screen: the admin page draws panels 35 px higher.
+    draw.AddRectFilled({0, 0}, {800, 515}, IM_COL32(22, 35, 45, 145));
     draw.AddRectFilled({170, 210}, {630, 420}, theme::White, 16.0f);
     draw.AddRect({170, 210}, {630, 420}, theme::Border, 16.0f);
     drawing.CenteredText(&draw, drawing.SemiBold(), 21.0f, 236.0f, theme::Text,

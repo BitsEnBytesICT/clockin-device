@@ -28,7 +28,7 @@ bool InputRouter::Process(const std::vector<TouchEvent>& events,
         if (signature_event) {
             if (event.type == TouchEventType::Down) {
                 Reset();
-                feedback.CancelPress();
+                feedback.CancelPress(now_seconds);
                 signature_page.BeginStroke(event.position);
             } else if (event.type == TouchEventType::Move && signature_page.IsDrawing()) {
                 signature_page.ContinueStroke(event.position);
@@ -45,12 +45,12 @@ bool InputRouter::Process(const std::vector<TouchEvent>& events,
             gesture_.start = event.position;
             gesture_.last = event.position;
             gesture_.target = active_page.HitTest(event.position);
-            feedback.Press(gesture_.target);
+            feedback.Press(gesture_.target, now_seconds);
             active_page.BeginScroll(event.position);
         } else if (event.type == TouchEventType::Move && gesture_.active) {
             if (Distance(event.position, gesture_.start) > 10.0f) {
                 gesture_.moved = true;
-                feedback.CancelPress();
+                feedback.CancelPress(now_seconds);
             }
             active_page.ScrollBy(event.position.y - gesture_.last.y);
             gesture_.last = event.position;
@@ -60,13 +60,13 @@ bool InputRouter::Process(const std::vector<TouchEvent>& events,
                                      release_target == gesture_.target;
             const UiControl activated = gesture_.target;
             if (valid_click) feedback.Release(activated, now_seconds);
-            else feedback.CancelPress();
+            else feedback.CancelPress(now_seconds);
             Reset();
             active_page.EndScroll();
             if (valid_click) activate({activated, now_seconds, event.position});
         } else if (event.type == TouchEventType::Cancel) {
             Reset();
-            feedback.CancelPress();
+            feedback.CancelPress(now_seconds);
             active_page.EndScroll();
             signature_page.CancelStroke();
         }

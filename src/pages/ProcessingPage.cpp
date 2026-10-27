@@ -10,7 +10,8 @@ namespace clockin {
 void ProcessingPage::Render(ImDrawList& draw, PageDrawing& drawing) const {
     drawing.Surface(&draw, {165, 95}, {635, 390}, 16.0f, true);
     const ImVec2 center{400.0f, 215.0f};
-    const float start_angle = static_cast<float>(ImGui::GetTime()) * 5.0f;
+    const float start_angle =
+        static_cast<float>(std::fmod(drawing.NowSeconds() * 5.0, 6.283185307179586));
     constexpr int segments = 24;
     for (int segment = 0; segment < segments; ++segment) {
         const float phase = static_cast<float>(segment) / segments;

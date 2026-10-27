@@ -35,7 +35,10 @@ bool NetworkService::Start() {
 
 void NetworkService::Stop() {
     if (!running_.exchange(false)) return;
-    stopping_.store(true);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stopping_.store(true);
+    }
     condition_.notify_all();
     if (thread_.joinable()) thread_.join();
     std::lock_guard<std::mutex> lock(mutex_);
@@ -235,10 +238,12 @@ void NetworkService::Scan() {
         SetError("Zoeken naar Wi-Fi-netwerken is mislukt");
         return;
     }
-    for (int index = 0; index < 12 && !stopping_.load(); ++index) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    if (!stopping_.load()) RefreshStatus();
+    if (PauseUnlessStopping(std::chrono::milliseconds(1200))) RefreshStatus();
+}
+
+bool NetworkService::PauseUnlessStopping(std::chrono::milliseconds duration) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return !condition_.wait_for(lock, duration, [this] { return stopping_.load(); });
 }
 
 void NetworkService::ClearSecret(std::string& value) {

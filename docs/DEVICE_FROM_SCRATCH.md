@@ -16,7 +16,7 @@ Cortex-M4 firmware and `/dev/ttyRPMSG0` are not part of normal operation.
 
 | Component | Source of truth | Responsibility |
 |---|---|---|
-| Device application | This `attendance-device` repository | ImGui UI, touch, RFID, buzzer, Wi-Fi UI, HTTP client and kiosk service |
+| Device application | This `clockin-device` repository | ImGui UI, touch, RFID, buzzer, Wi-Fi UI, HTTP client and kiosk service |
 | Board resources | `board/` in this repository | Device tree, boot menu, systemd units and recovery helpers |
 | Management platform | Separate `Bits-Bytes-management-platform` repository | Attendance API, MySQL, participant data, API-key permissions and browser UI |
 | Device secrets | `/etc/clockin-device/` on the board | API key, administrator PIN and runtime configuration |
@@ -47,8 +47,18 @@ Have the following before you start:
 - Serial or ST-LINK recovery for the first A7 boot change.
 - Windows with WSL 2 and Ubuntu 24.04.
 - WSL packages: `git`, `cmake`, `build-essential`, `file` and `binutils`.
-- The matching OpenSTLinux 5.0.8 STM32MP1 SDK below `/opt/st/stm32mp1`.
+- An ARM toolchain: either the matching OpenSTLinux 5.0.8 STM32MP1 SDK below
+  `/opt/st/stm32mp1` (needs an st.com account), or Ubuntu's armhf cross
+  toolchain set up below (no account needed).
 - A backend URL, device API key and four-digit local administrator PIN.
+
+If WSL reports `Failed to attach disk ... ext4.vhdx` the distribution's disk is
+gone. Re-register it (this erases nothing that still exists) and redo the setup:
+
+```powershell
+wsl --unregister Ubuntu-24.04
+wsl --install -d Ubuntu-24.04 --no-launch
+```
 
 Install build prerequisites in WSL:
 
@@ -63,22 +73,45 @@ Clone this branch on a new build machine:
 
 ```bash
 git clone --branch docs/a7-kiosk-complete-guide \
-  https://github.com/BitsEnBytesICT/attendance-device.git
-cd attendance-device
+  https://github.com/BitsEnBytesICT/clockin-device.git
+cd clockin-device
 ```
 
-Install the target SDK using ST's installer. If the SDK environment script is
-not below `/opt/st/stm32mp1`, set it explicitly:
+**Option A, ST SDK.** Install the target SDK using ST's installer. If the SDK
+environment script is not below `/opt/st/stm32mp1`, set it explicitly:
 
 ```bash
 export STM32_SDK_ENV=/absolute/path/to/environment-setup-cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi
+```
+
+**Option B, Ubuntu armhf toolchain.** Add the armhf ports archive and install
+the cross compiler plus armhf headers. libgpiod is deliberately not installed:
+Ubuntu ships v1, while the board and this code use v2, whose header the build
+script fetches itself.
+
+```bash
+sudo sed -i '/^Types:/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+sudo tee /etc/apt/sources.list.d/ubuntu-ports.sources >/dev/null <<'EOF'
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: noble noble-updates noble-security
+Components: main universe
+Architectures: armhf
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+sudo dpkg --add-architecture armhf
+sudo apt update
+sudo apt install -y pkg-config g++-arm-linux-gnueabihf libwayland-bin \
+  wayland-protocols libcurl4-openssl-dev:armhf libegl-dev:armhf \
+  libgles-dev:armhf libwayland-dev:armhf libxkbcommon-dev:armhf
 ```
 
 Run tests and produce the ARM binaries:
 
 ```bash
 bash scripts/test-host.sh
-bash scripts/build-arm.sh
+bash scripts/build-arm.sh          # Option A
+bash scripts/build-arm-ubuntu.sh   # Option B
 ```
 
 The headless tests create no desktop window. ARM outputs go outside the source

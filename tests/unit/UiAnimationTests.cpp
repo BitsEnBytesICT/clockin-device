@@ -1,6 +1,10 @@
 #include "TestHarness.hpp"
 
+#include "ui/components/ButtonFeedback.hpp"
 #include "ui/components/PageTransition.hpp"
+
+#include <algorithm>
+#include <cmath>
 #include "ui/components/StatusAnimation.hpp"
 
 using namespace clockin;
@@ -69,4 +73,35 @@ TEST_CASE("page transition is brief monotonic and fully settles") {
     CHECK(middle.offset_y < start.offset_y);
     CHECK_NEAR(complete.opacity, 1.0f, 0.0001f);
     CHECK_NEAR(complete.offset_y, 0.0f, 0.0001f);
+}
+
+TEST_CASE("button press and release scale changes continuously between frames") {
+    ButtonFeedback feedback;
+    const UiControl button = UiControl::AttendanceConfirm;
+    feedback.Press(button, 10.0);
+    float previous = feedback.Scale(button, 10.0);
+    CHECK_NEAR(previous, 1.0f, 0.0001f);
+    // 1 ms steps: no step may jump by more than a fraction of a percent.
+    for (int step = 1; step <= 120; ++step) {
+        const float scale = feedback.Scale(button, 10.0 + step * 0.001);
+        CHECK(std::fabs(scale - previous) < 0.002f);
+        previous = scale;
+    }
+    CHECK(previous < 0.975f);
+    feedback.Release(button, 10.12);
+    float peak = 0.0f;
+    for (int step = 0; step <= 260; ++step) {
+        const float scale = feedback.Scale(button, 10.12 + step * 0.001);
+        CHECK(std::fabs(scale - previous) < 0.002f);
+        peak = std::max(peak, scale);
+        previous = scale;
+    }
+    CHECK(peak > 1.01f);
+    CHECK_NEAR(feedback.Scale(button, 11.0), 1.0f, 0.0001f);
+
+    feedback.Press(button, 20.0);
+    feedback.CancelPress(20.05);
+    CHECK(!feedback.IsAnimating(button, 20.06));
+    CHECK(feedback.Scale(button, 20.06) < 1.0f);
+    CHECK_NEAR(feedback.Scale(button, 20.4), 1.0f, 0.0001f);
 }

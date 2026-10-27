@@ -60,11 +60,17 @@ sudo apt update
 sudo apt install -y git cmake build-essential file binutils
 ```
 
-Production builds require the matching OpenSTLinux 5.0.8 STM32MP1 SDK. Install
-it below `/opt/st/stm32mp1`; `scripts/build-arm.sh` finds its
-`environment-setup-*` file automatically. If it is installed elsewhere, set
-`STM32_SDK_ENV` to the full environment-setup path before building. The SDK is
-not stored in Git because it is large and machine-specific.
+For the ARM build, use either toolchain:
+
+- **OpenSTLinux 5.0.8 STM32MP1 SDK** (`scripts/build-arm.sh`). Install it below
+  `/opt/st/stm32mp1`; the script finds its `environment-setup-*` file
+  automatically, or set `STM32_SDK_ENV` to the full path. The SDK download
+  needs an st.com account and is not stored in Git.
+- **Ubuntu 24.04 armhf cross toolchain** (`scripts/build-arm-ubuntu.sh`). It
+  needs no ST account: Ubuntu noble and OpenSTLinux 5.0.8 share glibc 2.39 and
+  GCC 13, and the script links curl, libgpiod v2 and the Vivante EGL/GLES
+  libraries copied from the board itself. One-time setup is in
+  [docs/DEVICE_FROM_SCRATCH.md](docs/DEVICE_FROM_SCRATCH.md#2-clone-the-source-and-build-it).
 
 ## Build and test
 
@@ -72,15 +78,16 @@ Clone the repository, then run the scripts from any source location visible to
 Ubuntu/WSL:
 
 ```bash
-git clone https://github.com/BitsEnBytesICT/attendance-device.git
-cd attendance-device
+git clone --branch docs/a7-kiosk-complete-guide \
+  https://github.com/BitsEnBytesICT/clockin-device.git
+cd clockin-device
 bash scripts/test-host.sh
-bash scripts/build-arm.sh
+bash scripts/build-arm.sh          # or: bash scripts/build-arm-ubuntu.sh
 ```
 
 The first command runs headless tests with AddressSanitizer and
-UndefinedBehaviorSanitizer. It never creates a window. The second command uses
-the installed OpenSTLinux SDK and creates:
+UndefinedBehaviorSanitizer. It never creates a window. The second command
+cross-compiles and creates:
 
 ```text
 ~/.cache/clockin-device/arm/clockin-device
@@ -114,8 +121,9 @@ original configuration if either check fails:
 bash scripts/migrate-network-control.sh root@10.10.1.20
 ```
 
-The administrator screen then provides three tabs: RFID diagnostics, protected
-four-digit PIN rotation, and Wi-Fi management. Wi-Fi changes happen on a
+The administrator screen then provides four tabs: RFID diagnostics, protected
+four-digit PIN rotation, Wi-Fi management and the management server (API)
+address. Wi-Fi changes happen on a
 background worker so rendering and RFID remain responsive. See
 [docs/NETWORKING.md](docs/NETWORKING.md) for security and recovery details.
 

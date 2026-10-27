@@ -54,6 +54,17 @@ void WorkflowCoordinator::RequestHealth(double now_seconds) {
     }
 }
 
+void WorkflowCoordinator::ChangeApiBaseUrl(const std::string& base_url,
+                                           double now_seconds) {
+    api_.SetBaseUrl(base_url);
+    // The previous verdict belonged to the old server; show "checking" until
+    // a health request against the new address completes.
+    session_.health_known = false;
+    session_.health_online = false;
+    if (session_.health_pending) session_.health_result_stale = true;
+    RequestHealth(now_seconds);
+}
+
 bool WorkflowCoordinator::ConsumeActivity() {
     const bool detected = activity_detected_;
     activity_detected_ = false;
@@ -88,6 +99,12 @@ void WorkflowCoordinator::HandleApiResult(const ApiResult& result,
         session_.health_pending = false;
         const bool refresh_requested = session_.health_refresh_requested;
         session_.health_refresh_requested = false;
+        if (session_.health_result_stale) {
+            // Answered by the previous server address; ask the new one instead.
+            session_.health_result_stale = false;
+            RequestHealth(now_seconds);
+            return;
+        }
         session_.health_known = true;
         session_.health_online = result.IsOk();
         session_.next_health_check = now_seconds + (result.IsOk() ? 60.0 : 15.0);

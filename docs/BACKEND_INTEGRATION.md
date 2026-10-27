@@ -26,6 +26,19 @@ BITS_BYTES_API_KEY_FILE=/etc/clockin-device/rfid-api-key
 BITS_BYTES_ADMIN_PIN_FILE=/etc/clockin-device/admin-pin
 ```
 
+An administrator can change the address on the device: Beheer → API →
+Adres wijzigen opens the touch keyboard with the current address. A valid
+`http(s)://host[:port][/path]` address is saved atomically to
+`/etc/clockin-device/api-base-url` (root-only, `0600`), applied to the next
+request without a restart, and followed by a fresh `/api/health` check. That
+file takes precedence over `BITS_BYTES_API_BASE_URL`; deploying with
+`CLOCKIN_API_BASE_URL` set deletes it so the deployed value wins again. To
+return to the environment value by hand:
+
+```bash
+ssh root@10.10.1.20 'rm -f /etc/clockin-device/api-base-url && systemctl restart clockin-device.service'
+```
+
 The client sends the API key exactly as the `Authorization` header value. Do not
 prepend `Bearer ` unless the backend and client authentication design are both
 changed and tested together.

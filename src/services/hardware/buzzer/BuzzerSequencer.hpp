@@ -29,6 +29,8 @@ public:
     bool Update(double now_seconds, std::string& error);
     void Cancel();
     bool Active() const { return active_; }
+    // Time at which the current phase ends; only meaningful while Active().
+    double Deadline() const { return deadline_; }
 
 private:
     struct Phase {

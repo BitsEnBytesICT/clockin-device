@@ -4,6 +4,7 @@
 #include "services/network/INetworkService.hpp"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace clockin {
 
@@ -49,6 +50,22 @@ void ApplicationController::HandleAdminAction(AdminAction action,
                 error = "De vaste pincodeconfiguratie kan niet via het scherm worden gewijzigd.";
             }
             admin_page_.CompletePinSave(saved, error, now_seconds);
+            hardware_.PlayFeedback(saved ? FeedbackCue::Success
+                                         : FeedbackCue::Error);
+            break;
+        }
+        case AdminActionType::SaveApiUrl: {
+            std::string normalized;
+            std::string error;
+            const bool saved = api_url_store_.Save(configuration_.api_base_url_path,
+                                                   action.api_url, normalized, error);
+            if (saved) {
+                configuration_.api_base_url = normalized;
+                workflow_.ChangeApiBaseUrl(normalized, now_seconds);
+                admin_page_.SetApiUrl(normalized);
+                std::printf("API base URL changed to %s\n", normalized.c_str());
+            }
+            admin_page_.CompleteApiUrlSave(saved, error, now_seconds);
             hardware_.PlayFeedback(saved ? FeedbackCue::Success
                                          : FeedbackCue::Error);
             break;

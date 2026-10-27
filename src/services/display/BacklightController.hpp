@@ -14,6 +14,8 @@ public:
     void Initialize();
     void Update(bool activity_detected, double delta, double now_seconds);
     int Maximum() const { return maximum_; }
+    // True only once the panel has actually been written to zero brightness.
+    bool IsOff() const { return target_ == 0 && current_ == 0; }
 
 private:
     std::string brightness_path_;

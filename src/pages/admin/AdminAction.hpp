@@ -14,7 +14,8 @@ enum class AdminActionType {
     ConnectNewNetwork,
     DisconnectNetwork,
     ForgetNetwork,
-    SavePin
+    SavePin,
+    SaveApiUrl
 };
 
 struct AdminAction {
@@ -23,6 +24,7 @@ struct AdminAction {
     std::string ssid;
     std::string password;
     std::string pin;
+    std::string api_url;
     WifiSecurity security = WifiSecurity::Unsupported;
     bool supports_sae = false;
 };

@@ -19,11 +19,37 @@ struct TabBounds {
     VectorIcon icon;
 };
 
+// The tab row shares the back button's row (y 10..64), so the panels are drawn
+// kPanelShift pixels higher than their own coordinates. Panels keep their
+// original layout; this page translates their vertices and the touch points.
+constexpr float kTabTop = 10.0f;
+constexpr float kTabBottom = 64.0f;
+constexpr float kPanelShift = 35.0f;
+
 constexpr TabBounds kTabs[] = {
-    {65.0f, 275.0f, UiControl::AdminTabRfid, "RFID uitlezen", VectorIcon::Card},
-    {295.0f, 505.0f, UiControl::AdminTabPin, "Pincode", VectorIcon::Pin},
-    {525.0f, 735.0f, UiControl::AdminTabNetwork, "Netwerk", VectorIcon::Wifi},
+    {10.0f, 160.5f, UiControl::AdminTabRfid, "RFID", VectorIcon::Card},
+    {168.5f, 319.0f, UiControl::AdminTabPin, "Pincode", VectorIcon::Pin},
+    {327.0f, 477.5f, UiControl::AdminTabNetwork, "Netwerk", VectorIcon::Wifi},
+    {485.5f, 636.0f, UiControl::AdminTabApi, "API", VectorIcon::Globe},
 };
+
+// Moves everything a panel drew, including clip rectangles it pushed (the
+// scrolling Wi-Fi list); commands using the page's outer clip stay as they are.
+void TranslatePanel(ImDrawList& draw, int first_vertex, int first_command, float offset_y) {
+    for (int index = first_vertex; index < draw.VtxBuffer.Size; ++index) {
+        draw.VtxBuffer[index].pos.y += offset_y;
+    }
+    const ImVec2 outer_min = draw.GetClipRectMin();
+    const ImVec2 outer_max = draw.GetClipRectMax();
+    for (int index = first_command < 0 ? 0 : first_command;
+         index < draw.CmdBuffer.Size; ++index) {
+        ImVec4& clip = draw.CmdBuffer[index].ClipRect;
+        if (clip.x == outer_min.x && clip.y == outer_min.y &&
+            clip.z == outer_max.x && clip.w == outer_max.y) continue;
+        clip.y += offset_y;
+        clip.w += offset_y;
+    }
+}
 
 }  // namespace
 
@@ -31,18 +57,21 @@ UiControl AdminPage::HitTest(const ImVec2& point) const {
     if (PointInRectangle(point, 650, 10, 140, 54)) return UiControl::AdminBack;
     if (!ActiveSubflow()) {
         for (const TabBounds& tab : kTabs) {
-            if (PointInRectangle(point, tab.left, 82, tab.right - tab.left, 52)) {
+            if (PointInRectangle(point, tab.left, kTabTop, tab.right - tab.left,
+                                 kTabBottom - kTabTop)) {
                 return tab.control;
             }
         }
     }
-    if (tab_ == Tab::Pin) return pin_panel_.HitTest(point);
-    if (tab_ == Tab::Network) return network_panel_.HitTest(point);
+    const ImVec2 panel_point = PanelPoint(point);
+    if (tab_ == Tab::Pin) return pin_panel_.HitTest(panel_point);
+    if (tab_ == Tab::Network) return network_panel_.HitTest(panel_point);
+    if (tab_ == Tab::Api) return api_panel_.HitTest(panel_point);
     return UiControl::None;
 }
 
 bool AdminPage::BeginScroll(const ImVec2& point) {
-    return tab_ == Tab::Network && network_panel_.BeginScroll(point);
+    return tab_ == Tab::Network && network_panel_.BeginScroll(PanelPoint(point));
 }
 
 void AdminPage::ScrollBy(float delta_y) {
@@ -63,6 +92,10 @@ AdminAction AdminPage::Activate(const AppEvent& event) {
             network_panel_.Back(event.occurred_at);
             return {};
         }
+        if (tab_ == Tab::Api && api_panel_.HasSubflow()) {
+            api_panel_.Cancel(event.occurred_at);
+            return {};
+        }
         AdminAction action;
         action.type = AdminActionType::Exit;
         return action;
@@ -81,8 +114,15 @@ AdminAction AdminPage::Activate(const AppEvent& event) {
         action.type = AdminActionType::ScanNetworks;
         return action;
     }
-    if (tab_ == Tab::Pin) return pin_panel_.Activate(event);
-    if (tab_ == Tab::Network) return network_panel_.Activate(event);
+    if (event.control == UiControl::AdminTabApi) {
+        ChangeTab(Tab::Api, event.occurred_at);
+        return {};
+    }
+    AppEvent panel_event = event;
+    panel_event.position = PanelPoint(event.position);
+    if (tab_ == Tab::Pin) return pin_panel_.Activate(panel_event);
+    if (tab_ == Tab::Network) return network_panel_.Activate(panel_event);
+    if (tab_ == Tab::Api) return api_panel_.Activate(panel_event);
     return {};
 }
 
@@ -94,12 +134,21 @@ void AdminPage::SetNetworkSnapshot(NetworkSnapshot snapshot) {
 
 void AdminPage::SetApiStatus(bool known, bool online) {
     network_panel_.SetApiStatus(known, online);
+    api_panel_.SetApiStatus(known, online);
 }
+
+void AdminPage::SetApiUrl(std::string url) { api_panel_.SetCurrentUrl(std::move(url)); }
 
 void AdminPage::CompletePinSave(bool succeeded,
                                 const std::string& message,
                                 double now_seconds) {
     pin_panel_.CompleteSave(succeeded, message, now_seconds);
+}
+
+void AdminPage::CompleteApiUrlSave(bool succeeded,
+                                   const std::string& message,
+                                   double now_seconds) {
+    api_panel_.CompleteSave(succeeded, message, now_seconds);
 }
 
 void AdminPage::ShowNetworkError(std::string message) {
@@ -112,60 +161,82 @@ void AdminPage::Reset(bool pin_persistable, double now_seconds) {
     rfid_panel_.Reset();
     pin_panel_.Reset(pin_persistable);
     network_panel_.Reset();
+    api_panel_.Reset();
 }
 
 void AdminPage::ClearSecrets() {
     pin_panel_.ClearSecrets();
     network_panel_.ClearSecrets();
+    api_panel_.Cancel(0.0);
 }
 
 void AdminPage::ChangeTab(Tab tab, double now_seconds) {
     if (tab_ == tab) return;
     pin_panel_.ClearSecrets();
     network_panel_.ClearSecrets();
+    api_panel_.Cancel(now_seconds);
     tab_ = tab;
     tab_changed_at_ = now_seconds;
 }
 
 bool AdminPage::ActiveSubflow() const {
     return (tab_ == Tab::Pin && pin_panel_.HasSubflow()) ||
-           (tab_ == Tab::Network && network_panel_.HasSubflow());
+           (tab_ == Tab::Network && network_panel_.HasSubflow()) ||
+           (tab_ == Tab::Api && api_panel_.HasSubflow());
+}
+
+bool AdminPage::KeyboardOpen() const {
+    return (tab_ == Tab::Network && network_panel_.KeyboardOpen()) ||
+           (tab_ == Tab::Api && api_panel_.KeyboardOpen());
+}
+
+ImVec2 AdminPage::PanelPoint(const ImVec2& point) const {
+    // The full-screen keyboard is laid out in screen coordinates.
+    if (KeyboardOpen()) return point;
+    return {point.x, point.y + kPanelShift};
 }
 
 void AdminPage::Render(ImDrawList& draw, PageDrawing& drawing) const {
-    drawing.Text(&draw, drawing.SemiBold(), 27.0f, {40, 25}, theme::Text,
-                 "Beheer");
-    drawing.Text(&draw, drawing.Regular(), 14.0f, {40, 56}, theme::MutedText,
-                 "Apparaatinstellingen");
     drawing.ActionButton(&draw, {650, 10}, {790, 64}, "Terug",
                          UiControl::AdminBack, ButtonVariant::Secondary,
                          VectorIcon::Back);
 
-    const bool keyboard_open = tab_ == Tab::Network && network_panel_.KeyboardOpen();
+    const bool keyboard_open = KeyboardOpen();
     if (!keyboard_open) {
-        for (std::size_t index = 0; index < 3; ++index) {
-            const TabBounds& bounds = kTabs[index];
-            const bool active = static_cast<int>(tab_) == static_cast<int>(index);
-            draw.AddRectFilled({bounds.left, 82}, {bounds.right, 134},
+        constexpr float kIconSize = 22.0f;
+        constexpr float kGap = 8.0f;
+        constexpr float kLabelSize = 16.0f;
+        const float center_y = (kTabTop + kTabBottom) * 0.5f;
+        for (const TabBounds& bounds : kTabs) {
+            const bool active =
+                static_cast<int>(tab_) == static_cast<int>(&bounds - kTabs);
+            draw.AddRectFilled({bounds.left, kTabTop}, {bounds.right, kTabBottom},
                                active ? theme::PressedSurface : theme::White, 11.0f);
-            draw.AddRect({bounds.left, 82}, {bounds.right, 134},
+            draw.AddRect({bounds.left, kTabTop}, {bounds.right, kTabBottom},
                          active ? theme::Blue : theme::Border, 11.0f, 0,
                          active ? 2.0f : 1.0f);
-            DrawVectorIcon(draw, bounds.icon, {bounds.left + 34.0f, 108.0f}, 24.0f,
-                           active ? theme::Blue : theme::MutedText);
+            const ImU32 color = active ? theme::Blue : theme::MutedText;
             const ImVec2 label_size = drawing.SemiBold()->CalcTextSizeA(
-                16.0f, FLT_MAX, 0.0f, bounds.label);
-            drawing.Text(&draw, drawing.SemiBold(), 16.0f,
-                         {(bounds.left + bounds.right + 22.0f - label_size.x) * 0.5f,
-                          99.0f},
-                         active ? theme::Blue : theme::MutedText, bounds.label);
+                kLabelSize, FLT_MAX, 0.0f, bounds.label);
+            const float start_x =
+                (bounds.left + bounds.right - (kIconSize + kGap + label_size.x)) * 0.5f;
+            DrawVectorIcon(draw, bounds.icon, {start_x + kIconSize * 0.5f, center_y},
+                           kIconSize, color);
+            drawing.Text(&draw, drawing.SemiBold(), kLabelSize,
+                         {start_x + kIconSize + kGap, center_y - label_size.y * 0.5f},
+                         color, bounds.label);
         }
     }
 
     const int first_panel_vertex = draw.VtxBuffer.Size;
+    const int first_panel_command = draw.CmdBuffer.Size - 1;
     if (tab_ == Tab::Rfid) rfid_panel_.Render(draw, drawing);
     else if (tab_ == Tab::Pin) pin_panel_.Render(draw, drawing);
-    else network_panel_.Render(draw, drawing);
+    else if (tab_ == Tab::Network) network_panel_.Render(draw, drawing);
+    else api_panel_.Render(draw, drawing);
+    if (!keyboard_open) {
+        TranslatePanel(draw, first_panel_vertex, first_panel_command, -kPanelShift);
+    }
     ApplyPageTransition(
         draw, first_panel_vertex,
         EvaluatePageTransition(drawing.NowSeconds() - tab_changed_at_));

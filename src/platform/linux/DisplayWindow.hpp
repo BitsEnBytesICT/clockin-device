@@ -26,6 +26,7 @@ public:
     bool Open(const std::string& framebuffer_preference, std::string& error);
     void Close();
     void PollEvents() const;
+    void WaitEvents(double timeout_seconds) const;
     bool ShouldClose() const;
     void FramebufferSize(int& width, int& height) const;
     void SwapBuffers() const;

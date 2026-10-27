@@ -3,6 +3,7 @@
 #include "ui/Theme.hpp"
 #include "ui/components/PageDrawing.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace clockin {
@@ -14,15 +15,20 @@ UiControl WaitingPage::HitTest(const ImVec2& point) const {
 void WaitingPage::Render(ImDrawList& draw, PageDrawing& drawing) const {
     drawing.Surface(&draw, {60, 120}, {740, 410}, 16.0f, true);
     const ImVec2 center{400.0f, 220.0f};
-    const float time = static_cast<float>(ImGui::GetTime());
+    // Phase is derived in double precision: the steady clock counts from boot,
+    // and a float loses sub-frame resolution after a few days of uptime.
+    const double time = drawing.NowSeconds();
     for (int ring = 0; ring < 2; ++ring) {
-        float phase = std::fmod(time - ring * 0.5f, 1.0f);
+        float phase = static_cast<float>(std::fmod(time - ring * 0.5, 1.0));
         if (phase < 0.0f) phase += 1.0f;
-        if (phase < 0.05f) continue;
-        draw.AddCircle(center, 7.0f + 53.0f * phase,
+        // Ease the ripple outwards and fade it in, so a ring never pops into view.
+        const float remaining = 1.0f - phase;
+        const float radius = 7.0f + 53.0f * (1.0f - remaining * remaining);
+        const float fade_in = std::min(1.0f, phase / 0.12f);
+        draw.AddCircle(center, radius,
                        PageDrawing::WithAlpha(theme::Blue,
-                                              static_cast<int>((1.0f - phase) * 220.0f)),
-                       32, 4.0f);
+                                              static_cast<int>(fade_in * remaining * 220.0f)),
+                       0, 4.0f);
     }
     drawing.CenteredText(&draw, drawing.SemiBold(), 32.0f, 304.0f, theme::Text,
                          "Scan uw RFID-kaart");

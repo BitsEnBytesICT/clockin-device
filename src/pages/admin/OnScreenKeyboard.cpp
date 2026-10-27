@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cmath>
+#include <utility>
 
 namespace clockin {
 namespace {
@@ -71,7 +73,7 @@ void DrawCharacterRow(ImDrawList& draw,
 }  // namespace
 
 UiControl OnScreenKeyboard::HitTest(const ImVec2& point) const {
-    if (PointInRectangle(point, 655, 124, 44, 44)) {
+    if (options_.secret && PointInRectangle(point, 655, 124, 44, 44)) {
         return UiControl::AdminKeyboardVisibility;
     }
     if (PointInRectangle(point, 90, 400, 240, 56)) return UiControl::AdminKeyboardCancel;
@@ -94,8 +96,9 @@ void OnScreenKeyboard::Activate(const AppEvent& event) {
     } else if (event.control == UiControl::AdminKeyboardBackspace) {
         if (!value_.empty()) value_.pop_back();
     } else if (event.control == UiControl::AdminKeyboardSpace) {
-        if (value_.size() < 64) value_.push_back(' ');
-    } else if (event.control == UiControl::AdminKeyboardKey && value_.size() < 64) {
+        if (value_.size() < options_.max_length) value_.push_back(' ');
+    } else if (event.control == UiControl::AdminKeyboardKey &&
+               value_.size() < options_.max_length) {
         char character = CharacterAt(event.position);
         if (!symbols_ && shift_) character = static_cast<char>(std::toupper(character));
         if (character != '\0') value_.push_back(character);
@@ -116,6 +119,15 @@ void OnScreenKeyboard::Clear() {
     last_key_ = {-100.0f, -100.0f};
 }
 
+void OnScreenKeyboard::Open(KeyboardOptions options, std::string initial_value) {
+    Clear();
+    options_ = std::move(options);
+    if (initial_value.size() > options_.max_length) {
+        initial_value.resize(options_.max_length);
+    }
+    value_ = std::move(initial_value);
+}
+
 char OnScreenKeyboard::CharacterAt(const ImVec2& point) const {
     const char* first = symbols_ ? "1234567890" : "qwertyuiop";
     const char* second = symbols_ ? "@#$%&*-_=" : "asdfghjkl";
@@ -130,23 +142,50 @@ char OnScreenKeyboard::CharacterAt(const ImVec2& point) const {
     return character;
 }
 
-void OnScreenKeyboard::Render(ImDrawList& draw,
-                              PageDrawing& drawing,
-                              const std::string& ssid) const {
+void OnScreenKeyboard::Render(ImDrawList& draw, PageDrawing& drawing) const {
     draw.AddRectFilled({35, 78}, {765, 468}, theme::OffWhite, 14.0f);
     draw.AddRect({35, 78}, {765, 468}, theme::Border, 14.0f);
     drawing.CenteredText(&draw, drawing.SemiBold(), 19.0f, 88.0f, theme::Text,
-                         ("Wachtwoord voor " + ssid).c_str());
-    std::string display = visible_ ? value_ : std::string(value_.size(), '*');
-    if (display.size() > 24) display = "..." + display.substr(display.size() - 21);
+                         options_.title.c_str());
+    const bool masked = options_.secret && !visible_;
+    std::string display = masked ? std::string(value_.size(), '*') : value_;
+    // Keep the end of long entries (where typing happens) in view.
+    constexpr float kFieldFontSize = 25.0f;
+    const float available_width = options_.secret ? 520.0f : 580.0f;
+    const float center_x = options_.secret ? 375.0f : 400.0f;
+    ImFont* font = drawing.SemiBold();
+    if (font->CalcTextSizeA(kFieldFontSize, FLT_MAX, 0.0f, display.c_str()).x >
+        available_width) {
+        std::size_t start = 0;
+        while (start < display.size() &&
+               font->CalcTextSizeA(kFieldFontSize, FLT_MAX, 0.0f,
+                                   ("..." + display.substr(start)).c_str()).x >
+                   available_width) {
+            ++start;
+        }
+        display = "..." + display.substr(start);
+    }
     draw.AddRectFilled({90, 118}, {710, 174}, theme::White, 10.0f);
     draw.AddRect({90, 118}, {710, 174}, theme::LightBlue, 10.0f, 0, 1.5f);
-    drawing.CenteredText(&draw, drawing.SemiBold(), 25.0f, 132.0f, theme::Text,
-                         display.empty() ? "Voer het Wi-Fi-wachtwoord in" : display.c_str(),
-                         375.0f);
-    drawing.IconButton(&draw, {655, 124}, {699, 168},
-                       visible_ ? VectorIcon::EyeOff : VectorIcon::Eye,
-                       UiControl::AdminKeyboardVisibility, ButtonVariant::Quiet);
+    drawing.CenteredText(&draw, font, kFieldFontSize, 132.0f,
+                         display.empty() ? theme::MutedText : theme::Text,
+                         display.empty() ? options_.placeholder.c_str() : display.c_str(),
+                         center_x);
+    if (!display.empty()) {
+        const float width =
+            font->CalcTextSizeA(kFieldFontSize, FLT_MAX, 0.0f, display.c_str()).x;
+        const float caret_x = center_x + width * 0.5f + 3.0f;
+        const float blink = static_cast<float>(
+            0.5 + 0.5 * std::cos(std::fmod(drawing.NowSeconds() * 6.0, 6.283185307179586)));
+        draw.AddRectFilled({caret_x, 133.0f}, {caret_x + 2.0f, 160.0f},
+                           PageDrawing::WithAlpha(theme::Blue,
+                                                  static_cast<int>(70.0f + 185.0f * blink)));
+    }
+    if (options_.secret) {
+        drawing.IconButton(&draw, {655, 124}, {699, 168},
+                           visible_ ? VectorIcon::EyeOff : VectorIcon::Eye,
+                           UiControl::AdminKeyboardVisibility, ButtonVariant::Quiet);
+    }
     const double elapsed = drawing.NowSeconds() - last_key_time_;
     DrawCharacterRow(draw, drawing, kFirstRowLeft, 184, kFirstRowRight,
                      symbols_ ? "1234567890" : "qwertyuiop", shift_, last_key_, elapsed);
@@ -166,9 +205,9 @@ void OnScreenKeyboard::Render(ImDrawList& draw,
     drawing.ActionButton(&draw, {90, 400}, {330, 456}, "Annuleren",
                          UiControl::AdminKeyboardCancel, ButtonVariant::Secondary,
                          VectorIcon::Close);
-    drawing.ActionButton(&draw, {470, 400}, {710, 456}, "Verbinden",
+    drawing.ActionButton(&draw, {470, 400}, {710, 456}, options_.confirm_label.c_str(),
                          UiControl::AdminKeyboardConnect, ButtonVariant::Primary,
-                         VectorIcon::Wifi);
+                         options_.confirm_icon);
     if (!error_.empty()) {
         drawing.CenteredText(&draw, drawing.Regular(), 13.0f, 382.0f,
                              theme::RedText, error_.c_str());

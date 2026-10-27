@@ -245,6 +245,7 @@ void ApplicationController::Activate(const AppEvent& event) {
                         admin_page_.Reset(configuration_.admin_pin_persistable,
                                           now_seconds);
                         admin_page_.SetNetworkSnapshot(network_snapshot_);
+                        admin_page_.SetApiUrl(configuration_.api_base_url);
                         admin_page_.SetApiStatus(workflow_.Session().health_known,
                                                  workflow_.Session().health_online);
                         ChangePage(PageId::Admin, now_seconds);

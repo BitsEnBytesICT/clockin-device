@@ -4,6 +4,7 @@
 #include "services/network/WpaControlSocket.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
@@ -78,7 +79,8 @@ private:
     void DisconnectCurrent();
     void ForgetNetwork(int network_id);
     std::string Ipv4Address() const;
-    bool RestartDhcp() const;
+    bool RestartDhcp();
+    bool PauseUnlessStopping(std::chrono::milliseconds duration);
     static void ClearSecret(std::string& value);
 };
 

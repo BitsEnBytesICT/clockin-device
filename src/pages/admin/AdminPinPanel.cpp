@@ -133,7 +133,7 @@ void AdminPinPanel::BeginEntry(double now_seconds) {
 }
 
 void AdminPinPanel::Render(ImDrawList& draw, PageDrawing& drawing) const {
-    drawing.Surface(&draw, {48, 147}, {752, 452}, 14.0f, true);
+    drawing.Surface(&draw, {48, 112}, {752, 487}, 14.0f, true);
     const int first_vertex = draw.VtxBuffer.Size;
     if (mode_ == Mode::Overview || mode_ == Mode::Saved) {
         draw.AddCircleFilled({400, 226}, 46.0f, theme::PressedSurface, 36);

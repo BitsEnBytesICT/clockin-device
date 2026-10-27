@@ -48,7 +48,9 @@ Waiting → Processing → [clock-out Success]
 ```
 
 The administrator area requires the configured four-digit PIN and has RFID,
-PIN rotation and Wi-Fi tabs. It clears temporary credentials after inactivity.
+PIN rotation, Wi-Fi and API address tabs. The tab row shares the back button's
+row; `AdminPage` draws the panels 35 px above their own coordinates and maps
+touch points back, while the full-screen keyboard uses screen coordinates. It clears temporary credentials after inactivity.
 
 ## Hardware behaviour
 

@@ -73,7 +73,15 @@ bool ApiWorker::TryPop(ApiResult& result) {
 
 bool ApiWorker::HasApiKey() const { return !api_key_.empty(); }
 
-const std::string& ApiWorker::BaseUrl() const { return base_url_; }
+std::string ApiWorker::BaseUrl() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return base_url_;
+}
+
+void ApiWorker::SetBaseUrl(const std::string& base_url) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    base_url_ = base_url;
+}
 
 std::uint64_t ApiWorker::Submit(ApiJob job, bool priority) {
     if (!running_.load() || stopping_.load()) return 0;
@@ -90,7 +98,12 @@ std::uint64_t ApiWorker::Submit(ApiJob job, bool priority) {
 }
 
 void ApiWorker::ThreadMain() {
-    ApiClient client(base_url_, api_key_);
+    std::string base_url;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        base_url = base_url_;
+    }
+    ApiClient client(base_url, api_key_);
     while (!stopping_.load()) {
         ApiJob job;
         {
@@ -99,6 +112,10 @@ void ApiWorker::ThreadMain() {
             if (stopping_.load()) break;
             job = std::move(jobs_.front());
             jobs_.pop_front();
+            if (base_url != base_url_) {
+                base_url = base_url_;
+                client.SetBaseUrl(base_url);
+            }
         }
         ApiResult result = client.Execute(job, stopping_);
         std::lock_guard<std::mutex> lock(mutex_);

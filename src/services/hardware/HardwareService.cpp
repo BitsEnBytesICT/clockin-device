@@ -7,8 +7,10 @@
 #include "services/hardware/rfid/Mfrc522.hpp"
 #include "services/hardware/buzzer/BuzzerSequencer.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <deque>
 #include <mutex>
@@ -17,11 +19,19 @@
 namespace clockin {
 namespace {
 
+using SteadyClock = std::chrono::steady_clock;
+
 constexpr std::size_t kMaxCardEvents = 16;
 constexpr std::size_t kMaxFeedbackEvents = 6;
+constexpr auto kMaximumIdleWait = std::chrono::milliseconds(100);
 
-double Seconds(const std::chrono::steady_clock::time_point& value) {
+double Seconds(const SteadyClock::time_point& value) {
     return std::chrono::duration<double>(value.time_since_epoch()).count();
+}
+
+SteadyClock::time_point TimePoint(double seconds) {
+    return SteadyClock::time_point(std::chrono::duration_cast<SteadyClock::duration>(
+        std::chrono::duration<double>(seconds)));
 }
 
 int FeedbackPriority(FeedbackCue cue) {
@@ -56,6 +66,7 @@ public:
     std::atomic<unsigned int> reconnect_count{0};
     std::atomic<unsigned int> cancel_generation{0};
     mutable std::mutex mutex;
+    std::condition_variable wake;
     std::deque<RfidCard> cards;
     std::deque<FeedbackCue> feedback;
     std::string last_error;
@@ -168,7 +179,18 @@ void HardwareService::Impl::Run() {
                 consecutive_reader_errors = 0;
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // Sleep until the next RFID poll, reader retry or buzzer phase change
+        // instead of spinning; queued feedback and Stop() wake the thread early.
+        auto wake_at = std::min(reader_ready ? next_scan : next_rfid_open,
+                                SteadyClock::now() + kMaximumIdleWait);
+        if (buzzer.Active()) wake_at = std::min(wake_at, TimePoint(buzzer.Deadline()));
+        const bool buzzer_busy = buzzer.Active();
+        std::unique_lock<std::mutex> lock(mutex);
+        wake.wait_until(lock, wake_at, [&] {
+            return !running.load() ||
+                   cancel_generation.load() != observed_cancel_generation ||
+                   (!buzzer_busy && !feedback.empty());
+        });
     }
     buzzer.Cancel();
     rfid_open.store(false);
@@ -188,7 +210,11 @@ void HardwareService::Update(double) {
 
 void HardwareService::Stop() {
     if (!impl_->started.load()) return;
-    impl_->running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(impl_->mutex);
+        impl_->running.store(false);
+    }
+    impl_->wake.notify_all();
     if (impl_->worker.joinable()) impl_->worker.join();
     impl_->started.store(false);
     impl_->rfid_open.store(false);
@@ -219,12 +245,14 @@ void HardwareService::PlayFeedback(FeedbackCue cue) {
         impl_->feedback.pop_front();
     }
     impl_->feedback.push_back(cue);
+    impl_->wake.notify_one();
 }
 
 void HardwareService::CancelFeedback() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->feedback.clear();
     ++impl_->cancel_generation;
+    impl_->wake.notify_one();
 }
 
 bool HardwareService::RfidOpen() const { return impl_->rfid_open.load(); }

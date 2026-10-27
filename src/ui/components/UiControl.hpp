@@ -14,6 +14,8 @@ enum class UiControl {
     AdminTabRfid,
     AdminTabPin,
     AdminTabNetwork,
+    AdminTabApi,
+    AdminApiEdit,
     AdminPinChange,
     AdminPinCancel,
     AdminPinRestart,

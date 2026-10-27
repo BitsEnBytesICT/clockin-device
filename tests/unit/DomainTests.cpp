@@ -1,5 +1,7 @@
 #include "TestHarness.hpp"
 
+#include "domain/ApiUrl.hpp"
+
 #include "app/Navigation.hpp"
 #include "domain/AttendanceDate.hpp"
 #include "domain/CardPresenceTracker.hpp"
@@ -45,4 +47,23 @@ TEST_CASE("card presence emits once until removal") {
 
 TEST_CASE("RFID UIDs are whitespace-free uppercase values") {
     CHECK(NormalizeRfidUid(" 11 f3\nef12\t") == "11F3EF12");
+}
+
+TEST_CASE("API base URLs accept http(s) origins and reject unsafe input") {
+    std::string normalized;
+    std::string error;
+    CHECK(clockin::NormalizeApiBaseUrl("https://management-acc.bitsenbytes.net/",
+                                       normalized, error));
+    CHECK(normalized == "https://management-acc.bitsenbytes.net");
+    CHECK(clockin::NormalizeApiBaseUrl("http://10.10.1.5:3000/clock", normalized, error));
+    CHECK(normalized == "http://10.10.1.5:3000/clock");
+    CHECK(!clockin::NormalizeApiBaseUrl("", normalized, error));
+    CHECK(!error.empty());
+    CHECK(!clockin::NormalizeApiBaseUrl("ftp://server", normalized, error));
+    CHECK(!clockin::NormalizeApiBaseUrl("https://", normalized, error));
+    CHECK(!clockin::NormalizeApiBaseUrl("https://user@host", normalized, error));
+    CHECK(!clockin::NormalizeApiBaseUrl("https://host name", normalized, error));
+    CHECK(!clockin::NormalizeApiBaseUrl("https://host/api?x=1", normalized, error));
+    CHECK(!clockin::NormalizeApiBaseUrl("https://" + std::string(250, 'a'), normalized, error));
+    CHECK(normalized.empty());
 }

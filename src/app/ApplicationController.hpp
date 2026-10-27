@@ -17,6 +17,7 @@
 #include "services/display/BacklightController.hpp"
 #include "services/display/PerformanceMetrics.hpp"
 #include "services/config/AdminPinStore.hpp"
+#include "services/config/ApiUrlStore.hpp"
 #include "services/input/TouchInput.hpp"
 #include "services/network/NetworkTypes.hpp"
 #include "ui/components/ButtonFeedback.hpp"
@@ -51,6 +52,7 @@ public:
                      int draw_calls);
 
     PageId CurrentPage() const { return navigation_.Current(); }
+    bool DisplayDark() const { return backlight_.IsOff(); }
 
     void ShowProcessing(const std::string& message, double now_seconds) override;
     void ShowAttendance(const std::string& user_name,
@@ -72,6 +74,7 @@ private:
     INetworkService& network_;
     WorkflowCoordinator workflow_;
     AdminPinStore pin_store_;
+    ApiUrlStore api_url_store_;
     TouchInput touch_;
     BacklightController backlight_;
     PerformanceMetrics performance_;

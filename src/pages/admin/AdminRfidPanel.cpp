@@ -21,7 +21,7 @@ void AdminRfidPanel::Reset() {
 }
 
 void AdminRfidPanel::Render(ImDrawList& draw, PageDrawing& drawing) const {
-    drawing.Surface(&draw, {48, 147}, {752, 452}, 14.0f, true);
+    drawing.Surface(&draw, {48, 112}, {752, 487}, 14.0f, true);
     const ImVec2 icon_center{155.0f, 294.0f};
     const double elapsed = std::max(0.0, ImGui::GetTime() - read_at_);
     const float pulse = uid_.empty() ? 0.0f

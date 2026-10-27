@@ -24,20 +24,28 @@ void TouchInput::Update(double now_seconds) {
     events_.clear();
     last_sample_timestamp_ = -1.0;
     if (!Open(now_seconds)) return;
-    input_event event{};
+    // evdev always returns whole events, so read them in batches: one syscall
+    // per frame while idle instead of one per 24-byte event while touching.
+    constexpr std::size_t kBatch = 64;
+    input_event batch[kBatch];
     std::size_t event_budget = 512;
-    while (event_budget-- > 0) {
-        const ssize_t count = read(descriptor_, &event, sizeof(event));
-        if (count == static_cast<ssize_t>(sizeof(event))) {
-            ProcessEvent(event, now_seconds);
-            continue;
-        }
+    while (event_budget > 0) {
+        const ssize_t count = read(descriptor_, batch, sizeof(batch));
         if (count < 0 && errno == EINTR) continue;
-        if (count > 0 || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-            CancelPointer(now_seconds);
-            CloseAfterFailure(now_seconds);
+        if (count <= 0 || count % static_cast<ssize_t>(sizeof(input_event)) != 0) {
+            if (count > 0 || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+                CancelPointer(now_seconds);
+                CloseAfterFailure(now_seconds);
+            }
+            break;
         }
-        break;
+        const std::size_t events =
+            std::min(event_budget, static_cast<std::size_t>(count) / sizeof(input_event));
+        for (std::size_t index = 0; index < events; ++index) {
+            ProcessEvent(batch[index], now_seconds);
+        }
+        event_budget -= events;
+        if (static_cast<std::size_t>(count) < sizeof(batch)) break;
     }
 }
 

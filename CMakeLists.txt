@@ -22,6 +22,7 @@ set(CLOCKIN_DOMAIN_SOURCES
     src/app/Navigation.cpp
     src/app/WorkflowCoordinator.cpp
     src/app/WorkflowSession.cpp
+    src/domain/ApiUrl.cpp
     src/domain/AttendanceDate.cpp
     src/domain/CardPresenceTracker.cpp
     src/domain/RfidUid.cpp
@@ -62,6 +63,7 @@ if(CLOCKIN_BUILD_APP)
         ${CLOCKIN_DOMAIN_SOURCES}
         src/pages/AdminPage.cpp
         src/pages/AdminPinPage.cpp
+        src/pages/admin/AdminApiPanel.cpp
         src/pages/admin/AdminNetworkPanel.cpp
         src/pages/admin/AdminNetworkPanelDrawing.cpp
         src/pages/admin/AdminPinPanel.cpp
@@ -86,6 +88,8 @@ if(CLOCKIN_BUILD_APP)
         src/services/hardware/HardwareService.cpp
         src/services/input/TouchInput.cpp
         src/services/config/AdminPinStore.cpp
+        src/services/config/ApiUrlStore.cpp
+        src/services/config/SecureFile.cpp
         src/services/network/NetworkConnection.cpp
         src/services/network/NetworkService.cpp
         src/services/network/WpaControlSocket.cpp
@@ -164,9 +168,12 @@ if(CLOCKIN_BUILD_TESTS)
         tests/unit/WorkflowTests.cpp
         src/app/AppConfiguration.cpp
         src/services/config/AdminPinStore.cpp
+        src/services/config/ApiUrlStore.cpp
+        src/services/config/SecureFile.cpp
         ${CLOCKIN_DOMAIN_SOURCES}
         src/pages/AdminPage.cpp
         src/pages/AdminPinPage.cpp
+        src/pages/admin/AdminApiPanel.cpp
         src/pages/admin/AdminNetworkPanel.cpp
         src/pages/admin/AdminNetworkPanelDrawing.cpp
         src/pages/admin/AdminPinPanel.cpp

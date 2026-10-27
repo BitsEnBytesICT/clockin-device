@@ -7,6 +7,7 @@ namespace clockin {
 
 struct AppConfiguration {
     std::string api_base_url;
+    std::string api_base_url_path;
     std::string api_key;
     std::string admin_pin;
     std::string admin_pin_path;

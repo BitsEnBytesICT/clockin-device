@@ -87,6 +87,10 @@ void DisplayWindow::Close() {
 
 void DisplayWindow::PollEvents() const { glfwPollEvents(); }
 
+void DisplayWindow::WaitEvents(double timeout_seconds) const {
+    glfwWaitEventsTimeout(timeout_seconds);
+}
+
 bool DisplayWindow::ShouldClose() const {
     return window_ == nullptr || glfwWindowShouldClose(window_) == GLFW_TRUE;
 }

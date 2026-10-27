@@ -11,7 +11,7 @@ namespace clockin {
 namespace {
 
 constexpr float kListTop = 263.0f;
-constexpr float kListBottom = 444.0f;
+constexpr float kListBottom = 479.0f;
 constexpr float kRowHeight = 58.0f;
 
 }  // namespace
@@ -134,7 +134,9 @@ AdminAction AdminNetworkPanel::Activate(const AppEvent& event) {
             action.ssid = network->ssid;
             action.security = network->security;
         } else if (network->security == WifiSecurity::Personal) {
-            keyboard_.Clear();
+            KeyboardOptions options;
+            options.title = "Wachtwoord voor " + network->ssid;
+            keyboard_.Open(std::move(options));
             mode_ = Mode::Password;
             mode_changed_at_ = event.occurred_at;
         }

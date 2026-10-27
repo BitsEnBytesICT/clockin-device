@@ -143,12 +143,17 @@ TEST_CASE("administrator PIN page owns and bounds its entry state") {
 TEST_CASE("administrator tabs expose PIN confirmation and network refresh actions") {
     AdminPage admin;
     admin.Reset(true, 0.0);
-    AdminAction network = admin.Activate({UiControl::AdminTabNetwork, 1.0, {630, 105}});
+    CHECK(admin.HitTest({400, 37}) == UiControl::AdminTabNetwork);
+    AdminAction network = admin.Activate({UiControl::AdminTabNetwork, 1.0, {400, 37}});
     CHECK(network.type == AdminActionType::ScanNetworks);
-    CHECK(admin.HitTest({690, 180}) == UiControl::AdminNetworkRefresh);
+    // Panels are drawn 35 px higher than their own layout.
+    CHECK(admin.HitTest({711, 145}) == UiControl::AdminNetworkRefresh);
+    CHECK(admin.HitTest({711, 180}) == UiControl::None);
 
-    admin.Activate({UiControl::AdminTabPin, 2.0, {400, 105}});
-    admin.Activate({UiControl::AdminPinChange, 2.1, {400, 330}});
+    CHECK(admin.HitTest({240, 37}) == UiControl::AdminTabPin);
+    admin.Activate({UiControl::AdminTabPin, 2.0, {240, 37}});
+    CHECK(admin.HitTest({400, 300}) == UiControl::AdminPinChange);
+    admin.Activate({UiControl::AdminPinChange, 2.1, {400, 300}});
     for (int pass = 0; pass < 2; ++pass) {
         for (int digit = 1; digit <= 4; ++digit) {
             const UiControl key = static_cast<UiControl>(
@@ -160,4 +165,50 @@ TEST_CASE("administrator tabs expose PIN confirmation and network refresh action
             }
         }
     }
+}
+
+TEST_CASE("administrator API tab edits the server address with the touch keyboard") {
+    AdminPage admin;
+    admin.Reset(true, 0.0);
+    admin.SetApiUrl("https://old.example");
+    CHECK(admin.HitTest({80, 37}) == UiControl::AdminTabRfid);
+    CHECK(admin.HitTest({560, 37}) == UiControl::AdminTabApi);
+    admin.Activate({UiControl::AdminTabApi, 1.0, {560, 37}});
+    CHECK(admin.HitTest({400, 393}) == UiControl::AdminApiEdit);
+    admin.Activate({UiControl::AdminApiEdit, 1.1, {400, 393}});
+
+    // The keyboard is open: tabs are locked and the address field has no eye toggle.
+    CHECK(admin.HitTest({560, 37}) == UiControl::None);
+    CHECK(admin.HitTest({677, 145}) == UiControl::None);
+    CHECK(admin.HitTest({700, 300}) == UiControl::AdminKeyboardBackspace);
+    // Remove "example" from the prefilled address, then type "nl".
+    for (int count = 0; count < 7; ++count) {
+        admin.Activate({UiControl::AdminKeyboardBackspace, 1.2 + count * 0.01, {700, 300}});
+    }
+    admin.Activate({UiControl::AdminKeyboardKey, 1.3, {509, 300}});
+    admin.Activate({UiControl::AdminKeyboardKey, 1.4, {686, 250}});
+    AdminAction saved = admin.Activate({UiControl::AdminKeyboardConnect, 1.5, {590, 428}});
+    CHECK(saved.type == AdminActionType::SaveApiUrl);
+    CHECK(saved.api_url == "https://old.nl");
+
+    admin.CompleteApiUrlSave(false, "Schijf vol", 1.6);
+    CHECK(admin.HitTest({700, 300}) == UiControl::AdminKeyboardBackspace);
+    admin.CompleteApiUrlSave(true, {}, 1.7);
+    CHECK(admin.HitTest({400, 393}) == UiControl::AdminApiEdit);
+}
+
+TEST_CASE("API address keyboard rejects an invalid address without saving") {
+    AdminPage admin;
+    admin.Reset(true, 0.0);
+    admin.SetApiUrl("https://old.example");
+    admin.Activate({UiControl::AdminTabApi, 1.0, {560, 37}});
+    admin.Activate({UiControl::AdminApiEdit, 1.1, {400, 393}});
+    admin.Activate({UiControl::AdminKeyboardSpace, 1.2, {450, 355}});
+    const AdminAction rejected =
+        admin.Activate({UiControl::AdminKeyboardConnect, 1.3, {590, 428}});
+    CHECK(rejected.type == AdminActionType::None);
+    admin.Activate({UiControl::AdminBack, 1.4, {700, 37}});
+    CHECK(admin.HitTest({560, 37}) == UiControl::AdminTabApi);
+    const AdminAction exit = admin.Activate({UiControl::AdminBack, 1.5, {700, 37}});
+    CHECK(exit.type == AdminActionType::Exit);
 }

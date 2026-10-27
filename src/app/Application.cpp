@@ -15,31 +15,90 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <pthread.h>
+#include <thread>
+#include <unistd.h>
 #include <utility>
 
 namespace clockin {
 namespace {
 
-volatile std::sig_atomic_t g_exit_requested = 0;
-
-void HandleSignal(int) { g_exit_requested = 1; }
-
-bool InstallSignalHandlers() {
-    struct sigaction action {};
-    action.sa_handler = HandleSignal;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = 0;
-    return sigaction(SIGINT, &action, nullptr) == 0 &&
-           sigaction(SIGTERM, &action, nullptr) == 0;
-}
+// Hard upper bound for a clean shutdown. systemd waits TimeoutStopSec before
+// SIGKILL; finishing well inside that keeps restarts fast and predictable.
+constexpr double kShutdownDeadlineSeconds = 3.0;
+// While the backlight is off nothing is visible, so the loop only keeps touch,
+// RFID, API and network handling alive at this interval instead of rendering.
+constexpr double kDarkPollSeconds = 0.04;
 
 double SteadySeconds() {
     using Clock = std::chrono::steady_clock;
     return std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
 }
+
+// Receives SIGINT/SIGTERM/SIGHUP on a dedicated thread. The signals are blocked
+// in every other thread, so a blocking driver call (EGL, SPI, curl) can never
+// swallow them, and a stuck cleanup is cut off after kShutdownDeadlineSeconds.
+class ShutdownSignals {
+public:
+    ~ShutdownSignals() { Finish(); }
+
+    bool Install() {
+        sigemptyset(&signals_);
+        sigaddset(&signals_, SIGINT);
+        sigaddset(&signals_, SIGTERM);
+        sigaddset(&signals_, SIGHUP);
+        // Threads created afterwards inherit this mask, including GLFW/EGL ones.
+        if (pthread_sigmask(SIG_BLOCK, &signals_, nullptr) != 0) return false;
+        try {
+            watcher_ = std::thread(&ShutdownSignals::Watch, this);
+        } catch (...) {
+            return false;
+        }
+        return true;
+    }
+
+    bool Requested() const { return requested_.load(); }
+
+    void Finish() {
+        finished_.store(true);
+        if (watcher_.joinable()) watcher_.join();
+    }
+
+private:
+    sigset_t signals_{};
+    std::atomic<bool> requested_{false};
+    std::atomic<bool> finished_{false};
+    std::thread watcher_;
+
+    void Watch() {
+        const timespec interval{0, 100 * 1000 * 1000};
+        double deadline = 0.0;
+        while (!finished_.load()) {
+            siginfo_t info{};
+            const int signal = sigtimedwait(&signals_, &info, &interval);
+            if (signal > 0) {
+                if (requested_.exchange(true)) {
+                    std::fprintf(stderr, "Second %s received; exiting immediately\n",
+                                 strsignal(signal));
+                    _exit(0);
+                }
+                std::printf("%s received; shutting down\n", strsignal(signal));
+                deadline = SteadySeconds() + kShutdownDeadlineSeconds;
+            }
+            if (requested_.load() && !finished_.load() && SteadySeconds() >= deadline) {
+                std::fprintf(stderr, "Shutdown exceeded %.0f s; forcing exit\n",
+                             kShutdownDeadlineSeconds);
+                _exit(0);
+            }
+        }
+    }
+};
 
 }  // namespace
 
@@ -66,6 +125,12 @@ Application::~Application() = default;
 int Application::Run() {
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
+
+    ShutdownSignals shutdown;
+    if (!shutdown.Install()) {
+        std::fprintf(stderr, "Unable to install process signal handling\n");
+        return 1;
+    }
     if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
         std::fprintf(stderr, "Unable to initialize libcurl\n");
         return 1;
@@ -110,32 +175,29 @@ int Application::Run() {
     std::printf("API: %s (%s)\n", impl_->configuration.api_base_url.c_str(),
                 impl_->configuration.ApiReady() ? "configured" : "incomplete configuration");
 
-    g_exit_requested = 0;
-    if (!InstallSignalHandlers()) {
-        std::fprintf(stderr, "Unable to install process signal handlers\n");
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        impl_->display.Close();
-        curl_global_cleanup();
-        return 1;
-    }
     double last_frame = SteadySeconds();
     impl_->controller.Start(last_frame);
+    bool dark = false;
 
-    while (g_exit_requested == 0 && !impl_->display.ShouldClose()) {
+    while (!shutdown.Requested() && !impl_->display.ShouldClose()) {
+        if (dark) impl_->display.WaitEvents(kDarkPollSeconds);
+        else impl_->display.PollEvents();
         const double frame_start = SteadySeconds();
         const double frame_seconds = std::max(0.0, frame_start - last_frame);
         const double delta = std::min(0.05, frame_seconds);
         last_frame = frame_start;
 
-        impl_->display.PollEvents();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
         const double update_start = SteadySeconds();
         impl_->controller.Update(delta, frame_start);
+        dark = impl_->controller.DisplayDark();
+        if (dark) {
+            ImGui::EndFrame();
+            continue;
+        }
         const double render_start = SteadySeconds();
         impl_->controller.Render(frame_start);
         ImGui::Render();
@@ -166,6 +228,7 @@ int Application::Run() {
             draw_data == nullptr ? 0 : draw_data->TotalIdxCount, draw_calls);
     }
 
+    const double shutdown_start = SteadySeconds();
     std::printf("Shutdown requested\n");
     impl_->controller.Stop();
     std::printf("Background services stopped\n");
@@ -174,6 +237,8 @@ int Application::Run() {
     ImGui::DestroyContext();
     impl_->display.Close();
     curl_global_cleanup();
+    std::printf("Shutdown complete in %.0f ms\n", (SteadySeconds() - shutdown_start) * 1000.0);
+    shutdown.Finish();
     return 0;
 }
 

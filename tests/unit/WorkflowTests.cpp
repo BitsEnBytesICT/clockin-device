@@ -144,3 +144,27 @@ TEST_CASE("API rejection, cancellation, timeout and uncertain result show errors
         if (outcome == clockin::ApiOutcome::Uncertain) CHECK(!view.detail.empty());
     }
 }
+
+TEST_CASE("changing the API address re-checks health against the new server") {
+    clockin::test::FakeApiService api;
+    clockin::test::FakeHardwareService hardware;
+    clockin::test::RecordingWorkflowView view;
+    clockin::WorkflowCoordinator workflow(api, hardware);
+    workflow.Start(0.0);
+    const std::uint64_t old_health = api.LastId(clockin::ApiJobType::Health);
+    workflow.ChangeApiBaseUrl("https://new.example", 1.0);
+    CHECK(api.base_url == "https://new.example");
+    CHECK(!workflow.Session().health_known);
+
+    // The answer from the old server must not be shown for the new address.
+    api.Push(Result(old_health, clockin::ApiJobType::Health, clockin::ApiOutcome::Ok));
+    workflow.Update(clockin::PageId::Admin, 1.1, view);
+    CHECK(!workflow.Session().health_known);
+    CHECK(api.Count(clockin::ApiJobType::Health) == 2);
+
+    api.Push(Result(api.LastId(clockin::ApiJobType::Health), clockin::ApiJobType::Health,
+                    clockin::ApiOutcome::TransportFailed));
+    workflow.Update(clockin::PageId::Admin, 1.2, view);
+    CHECK(workflow.Session().health_known);
+    CHECK(!workflow.Session().health_online);
+}

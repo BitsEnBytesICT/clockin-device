@@ -17,7 +17,8 @@ ExecStart=/usr/local/bin/clockin-device
 ExecStopPost=/usr/local/lib/clockin-device/disable-buzzer.sh
 Restart=always
 RestartSec=5
-TimeoutStopSec=10
+# The application finishes or force-exits within 3 s of SIGTERM.
+TimeoutStopSec=5
 UMask=0077
 RuntimeDirectory=clockin-device
 RuntimeDirectoryMode=0700

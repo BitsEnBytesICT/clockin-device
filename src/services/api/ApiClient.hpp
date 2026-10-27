@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <curl/curl.h>
 #include <string>
+#include <utility>
 
 namespace clockin {
 
@@ -18,6 +19,7 @@ public:
     ApiClient& operator=(const ApiClient&) = delete;
 
     ApiResult Execute(const ApiJob& job, const std::atomic<bool>& cancel);
+    void SetBaseUrl(std::string base_url) { base_url_ = std::move(base_url); }
 
 private:
     static constexpr std::size_t kMaxResponseBytes = 64 * 1024;

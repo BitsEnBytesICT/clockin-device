@@ -25,6 +25,7 @@ public:
                          IWorkflowView& view);
     void ReturnToWaiting(double now_seconds, IWorkflowView& view);
     void RequestHealth(double now_seconds);
+    void ChangeApiBaseUrl(const std::string& base_url, double now_seconds);
 
     const WorkflowSession& Session() const { return session_; }
     WorkflowSession& Session() { return session_; }

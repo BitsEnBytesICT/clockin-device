@@ -26,7 +26,8 @@ public:
                                   const std::string& signature) override;
     bool TryPop(ApiResult& result) override;
     bool HasApiKey() const override;
-    const std::string& BaseUrl() const override;
+    std::string BaseUrl() const override;
+    void SetBaseUrl(const std::string& base_url) override;
 
 private:
     static constexpr std::size_t kMaxQueuedJobs = 4;

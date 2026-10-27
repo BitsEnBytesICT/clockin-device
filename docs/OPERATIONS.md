@@ -2,7 +2,7 @@
 
 ## Source and build locations
 
-The cloned `attendance-device` repository is the editable source. It may live
+The cloned `clockin-device` repository is the editable source. It may live
 inside WSL or in a Windows directory exposed to WSL; every script discovers the
 repository root from its own location. Generated builds stay outside the source:
 
@@ -14,15 +14,18 @@ repository root from its own location. Generated builds stay outside the source:
 ## Normal release sequence
 
 ```bash
-cd /path/to/attendance-device
+cd /path/to/clockin-device
 bash scripts/test-host.sh
-bash scripts/build-arm.sh
+bash scripts/build-arm.sh          # or: bash scripts/build-arm-ubuntu.sh
 ```
 
-The ARM build script finds the latest SDK below `/opt/st/stm32mp1`. Set
-`STM32_SDK_ENV` to select a specific environment setup file. It verifies the
-output architecture and scans the production binary for legacy simulator,
-RPMsg and LED command strings.
+`build-arm.sh` finds the latest SDK below `/opt/st/stm32mp1`; set
+`STM32_SDK_ENV` to select a specific environment setup file.
+`build-arm-ubuntu.sh` uses Ubuntu 24.04's armhf toolchain and links against
+libraries copied from the board (see
+[scripts/README.md](../scripts/README.md)). Both verify the output architecture
+and scan the production binary for legacy simulator, RPMsg and LED command
+strings.
 
 For an already-configured board:
 
@@ -97,6 +100,16 @@ ssh root@10.10.1.20 'systemctl show clockin-device.service -p MainPID -p NRestar
 `systemctl stop clockin-device.service` deliberately suppresses automatic
 restart. Run `systemctl start clockin-device.service` or reboot to resume kiosk
 operation.
+
+Shutdown signals are handled on a dedicated thread. A normal stop logs
+`Shutdown complete in N ms` (about 0.2 s on the DK2). If cleanup ever hangs, the
+application logs `Shutdown exceeded 3 s; forcing exit` and exits; a second
+SIGTERM/SIGINT exits immediately. `TimeoutStopSec=5` is only the last resort,
+and `ExecStopPost` still disables the buzzer PWM in every case.
+
+While the backlight is off (60 s without touch or card activity) the
+application stops rendering and only polls input, RFID, API and Wi-Fi every
+40 ms, so neither it nor Weston spends CPU or GPU time on a dark panel.
 
 Do not print `/etc/clockin-device/rfid-api-key` or `admin-pin` into a terminal or
 journal. To rotate either value, write it through a protected input method,

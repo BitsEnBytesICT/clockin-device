@@ -1,5 +1,7 @@
 #include "app/AppConfiguration.hpp"
 
+#include "domain/ApiUrl.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -20,6 +22,14 @@ std::string Environment(const char* name) {
     return value == nullptr ? std::string() : Trim(value);
 }
 
+std::string ReadFirstLine(const std::string& path) {
+    std::ifstream input(path.c_str());
+    if (!input.is_open()) return {};
+    std::string value;
+    std::getline(input, value);
+    return Trim(value);
+}
+
 std::string ReadSecret(const char* value_name,
                        const char* path_name,
                        const char* default_path) {
@@ -28,10 +38,7 @@ std::string ReadSecret(const char* value_name,
 
     std::string path = Environment(path_name);
     if (path.empty()) path = default_path;
-    std::ifstream input(path.c_str());
-    if (!input.is_open()) return {};
-    std::getline(input, value);
-    return Trim(value);
+    return ReadFirstLine(path);
 }
 
 bool IsFourDigitPin(const std::string& value) {
@@ -60,6 +67,21 @@ AppConfiguration AppConfiguration::Load(std::vector<std::string>* warnings) {
     config.api_base_url = Environment("BITS_BYTES_API_BASE_URL");
     while (!config.api_base_url.empty() && config.api_base_url.back() == '/') {
         config.api_base_url.pop_back();
+    }
+    config.api_base_url_path = Environment("BITS_BYTES_API_BASE_URL_FILE");
+    if (config.api_base_url_path.empty()) {
+        config.api_base_url_path = "/etc/clockin-device/api-base-url";
+    }
+    // An address saved from the administrator screen takes precedence.
+    const std::string saved_url = ReadFirstLine(config.api_base_url_path);
+    if (!saved_url.empty()) {
+        std::string normalized;
+        std::string error;
+        if (NormalizeApiBaseUrl(saved_url, normalized, error)) {
+            config.api_base_url = normalized;
+        } else {
+            Warn(warnings, "Ignoring invalid saved API base URL: " + error);
+        }
     }
     config.api_key = ReadSecret("BITS_BYTES_API_KEY",
                                 "BITS_BYTES_API_KEY_FILE",

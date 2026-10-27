@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <ifaddrs.h>
 #include <netinet/in.h>
@@ -182,7 +183,7 @@ bool NetworkService::WaitForAssociation(int network_id, const std::string& ssid)
             Publish();
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if (!PauseUnlessStopping(std::chrono::milliseconds(500))) break;
     }
     return false;
 }
@@ -195,7 +196,7 @@ bool NetworkService::WaitForAddress() {
             Publish();
             return true;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        if (!PauseUnlessStopping(std::chrono::milliseconds(500))) break;
     }
     return false;
 }
@@ -264,20 +265,31 @@ std::string NetworkService::Ipv4Address() const {
     return result;
 }
 
-bool NetworkService::RestartDhcp() const {
+bool NetworkService::RestartDhcp() {
     const pid_t child = fork();
     if (child < 0) return false;
     if (child == 0) {
+        // The application blocks shutdown signals in every thread; do not let
+        // systemctl inherit that mask.
+        sigset_t none;
+        sigemptyset(&none);
+        sigprocmask(SIG_SETMASK, &none, nullptr);
         execl("/bin/systemctl", "systemctl", "restart", "udhcpc-wlan0.service",
               static_cast<char*>(nullptr));
         _exit(127);
     }
+    // Poll instead of blocking so a shutdown is never held hostage by systemctl.
+    // Killing the client does not cancel the systemd job it already queued.
     int status = 0;
-    pid_t waited = -1;
-    do {
-        waited = waitpid(child, &status, 0);
-    } while (waited < 0 && errno == EINTR);
-    return waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    for (int attempt = 0; attempt < 400; ++attempt) {
+        const pid_t waited = waitpid(child, &status, WNOHANG);
+        if (waited == child) return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+        if (waited < 0 && errno != EINTR) return false;
+        if (!PauseUnlessStopping(std::chrono::milliseconds(50))) break;
+    }
+    kill(child, SIGKILL);
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    return false;
 }
 
 }  // namespace clockin
